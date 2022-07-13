@@ -29,6 +29,18 @@ df.dtypes
 # df['BareNuc'] = df['BareNuc'].astype('int')
 # df.dtypes
 
+stuff = [1, 2, 3]
+from itertools import chain, combinations
+def all_subsets(ss):
+    return chain(*map(lambda x: combinations(ss, x), range(0, len(ss)+1)))
+
+for subset in all_subsets(stuff):
+    print(subset)
+
+test = ['known CAD', 'previous AMI', 'previous PCI', 'previous CABG', 'previous STROKE', 'Diabetes', 'Smoking', 'Arterial Hypertension', 'Dislipidemia', 'Angiopathy',
+'Chronic Kindey Disease','Family History of CAD','ASYMPTOMATIC','ATYPICAL SYMPTOMS','ANGINA LIKE','DYSPNOEA ON EXERTION','INCIDENT OF PRECORDIAL PAIN','RST ECG','male','Overweight',
+'Obese','normal_weight','<40','40-50','50-60','>60','CNN_Healthy','Doctor: Healthy']
+
 # select features
 feature_df = df[['known CAD', 'previous AMI', 'previous PCI', 'previous CABG', 'previous STROKE', 'Diabetes', 'Smoking', 'Arterial Hypertension', 'Dislipidemia', 'Angiopathy',
 'Chronic Kindey Disease','Family History of CAD','ASYMPTOMATIC','ATYPICAL SYMPTOMS','ANGINA LIKE','DYSPNOEA ON EXERTION','INCIDENT OF PRECORDIAL PAIN','RST ECG','male','Overweight',
@@ -39,7 +51,7 @@ df['CAD'] = df['CAD'].astype('int')
 y = np.asarray(df['CAD'])
 
 ## Train/Test split
-X_train, X_test, y_train, y_test = train_test_split( X, y, test_size=0.3, random_state=4)
+X_train, X_test, y_train, y_test = train_test_split( X, y, test_size=0.3, random_state=4, shuffle=True)
 # print the shape of X_trainset and y_trainset
 print('Shape of X training set {}'.format(X_train.shape),'&','Size of Y training set {}'.format(y_train.shape))
 # print the shape of X_testset and y_testset
@@ -85,6 +97,7 @@ def plot_confusion_matrix(cm, CADes,
 #### Support Vector Machines ####
 #################################
 print("\nSupport Vector Machines\n")
+alg="svm"
 ## Modelling
 # Each of Linear, Polynomial, Radial basis function (RBF) and Sigmoid functions has its characteristics, its pros and cons, and its equation,
 # but as there's no easy way of knowing which function performs best with any given dataset. Usually choose different functions in turn and 
@@ -105,6 +118,8 @@ plt.figure()
 plt.savefig("plot.jpg")
 plot_confusion_matrix(cnf_matrix, CADes=['Healthy(0)','CAD(1)'],normalize= False,  title='Confusion matrix')
 
+best_acc=metrics.accuracy_score(y_test, yhat)
+
 # doctor's decision's accuracy
 doctor = np.asarray(df['Doctor: Healthy'])
 true = np.asarray(df['HEALTHY'])
@@ -122,6 +137,7 @@ print("jaccard_score: ", j_sc)
 #### Linear Regression ####
 ###########################
 print("\nLinear Regression\n")
+alg="lr"
 # train a Logistic Regression Model using the train_x you created and the train_y created previously
 regr = linear_model.LinearRegression()
 X = np.asarray(feature_df)
@@ -165,6 +181,7 @@ print("jaccard_score: ", j_sc)
 #### K Nearest Neighbors ####
 #############################
 print("\nK Nearest Neighbors\n")
+alg="knn"
 # train a Logistic Regression Model using the train_x you created and the train_y created previously
 ## Training
 # with k=4
@@ -211,6 +228,7 @@ print("jaccard_score: ", j_sc)
 #### Decision Trees ####
 ########################
 print("\nDecision Trees\n")
+alg="dt"
 ## Modelling
 # We will first create an instance of the DecisionTreeClassifier called drugTree
 # Inside of the classifier, specify criterion="entropy" so we can see the information gain of each node.
