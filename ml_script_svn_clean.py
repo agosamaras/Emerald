@@ -56,7 +56,7 @@ def ml(df,subset, rndm): #, svm=True, lr=True, knn=True, dt=True):
     #     print("algorithm: ", alg)
     #     print("features: ", subset)
 
-    # ##########################
+    ##########################
     # ### Linear Regression ####
     # ##########################
     # # print("\nLinear Regression\n")
@@ -79,6 +79,8 @@ def ml(df,subset, rndm): #, svm=True, lr=True, knn=True, dt=True):
     #     else:
     #         bool_test_y_.append(1)
 
+    # return metrics.accuracy_score(test_y, bool_test_y_)
+
     # if metrics.accuracy_score(test_y, bool_test_y_) > best_acc:
     #     best_acc=metrics.accuracy_score(test_y, bool_test_y_)
     #     print("new best accuracy: ", best_acc)
@@ -91,7 +93,7 @@ def ml(df,subset, rndm): #, svm=True, lr=True, knn=True, dt=True):
     # # print("\nK Nearest Neighbors\n")
     # alg="knn"
     # # train a Logistic Regression Model using the train_x you created and the train_y created previously
-    # k = 13
+    # k = 20 #TODO k=13 when testing with doctor, 20 w/o
     # neigh = KNeighborsClassifier(n_neighbors = k).fit(X_train,y_train)
     # # print("neigh :", neigh)
 
@@ -123,7 +125,7 @@ def ml(df,subset, rndm): #, svm=True, lr=True, knn=True, dt=True):
     # ## Prediction
     # predTree = drugTree.predict(X_test)
 
-    # # return metrics.accuracy_score(y_test, predTree)
+    # return metrics.accuracy_score(y_test, predTree)
 
     # if metrics.accuracy_score(y_test, predTree) > best_acc:
     #     best_acc=metrics.accuracy_score(y_test, predTree)
@@ -137,18 +139,18 @@ def ml(df,subset, rndm): #, svm=True, lr=True, knn=True, dt=True):
     # print("\nRandom Forest\n")
     alg="rf"
     # train a Logistic Regression Model using the train_x you created and the train_y created previously
-    rndF = RandomForestClassifier(max_depth=2, random_state=0).fit(X_train,y_train)
+    rndF = RandomForestClassifier(max_depth=None, random_state=0, n_estimators=60).fit(X_train,y_train)
 
     # Prediction
     n_yhat = rndF.predict(X_test)
     # print("Random Forest accuracy: {c}%".format(c = metrics.accuracy_score(y_test, n_yhat)))
     return metrics.accuracy_score(y_test, n_yhat)
 
-    # if metrics.accuracy_score(y_test, n_yhat) > best_acc:
-    #     best_acc=metrics.accuracy_score(y_test, n_yhat)
-    #     print("new best accuracy: ", best_acc)
-    #     print("algorithm: ", alg)
-    #     print("features: ", subset)
+#     # # if metrics.accuracy_score(y_test, n_yhat) > best_acc:
+#     # #     best_acc=metrics.accuracy_score(y_test, n_yhat)
+#     # #     print("new best accuracy: ", best_acc)
+#     # #     print("algorithm: ", alg)
+#     # #     print("features: ", subset)
 
     # ##################
     # ### ADA Boost ####
@@ -156,12 +158,10 @@ def ml(df,subset, rndm): #, svm=True, lr=True, knn=True, dt=True):
     # # print("\nADA Boost\n")
     # alg="ada"
     # # train a Logistic Regression Model using the train_x you created and the train_y created previously
-    # ada = AdaBoostClassifier(n_estimators=100, random_state=0).fit(X_train,y_train)
+    # ada = AdaBoostClassifier(n_estimators=30, random_state=0).fit(X_train,y_train)
 
     # # Prediction
     # n_yhat = ada.predict(X_test)
-
-    # # return metrics.accuracy_score(y_test, n_yhat)
 
     # # print("Ada Boost accuracy: {c}%".format(c = metrics.accuracy_score(y_test, n_yhat)))
     # return metrics.accuracy_score(y_test, n_yhat)
@@ -179,8 +179,11 @@ def ml(df,subset, rndm): #, svm=True, lr=True, knn=True, dt=True):
 
 # create a dataframe from the data and read it
 df = pd.read_csv('/d/Σημειώσεις/PhD - EMERALD/src/cad_dset.csv')
-test = ['known CAD', 'previous AMI', 'previous CABG', 'previous STROKE', 'Diabetes', 
-                   'Smoking', 'Chronic Kindey Disease', 'ANGINA LIKE', 'DYSPNOEA ON EXERTION', 'INCIDENT OF PRECORDIAL PAIN', 'RST ECG', 'male', '>60', 'Doctor: Healthy']
+test = ['known CAD', 'previous PCI', 'Diabetes', 'Smoking',
+       'Arterial Hypertension', 'ASYMPTOMATIC', 'ATYPICAL SYMPTOMS',
+       'ANGINA LIKE', 'DYSPNOEA ON EXERTION', 'INCIDENT OF PRECORDIAL PAIN',
+       'RST ECG', 'male', 'Overweight', '<40', 'CNN_Healthy',
+       'Doctor: Healthy']
 
 # doctor's decision's accuracy
 doctor = np.asarray(df['Doctor: Healthy'])
@@ -190,12 +193,12 @@ doc_acc=metrics.accuracy_score(true, doctor)
 best_acc = 80.0
 print("doctor's accuracy: ", doc_acc)
 
-iterations = 10000
+iterations = 200
 
 from joblib import Parallel, delayed
-knn_acc = Parallel(n_jobs=-1)(delayed(ml)(df, test, rndm=i) for i in range(0,iterations))
-total_knn_acc = sum(knn_acc)
-print("avg knn acc: {a:5.2f}%".format(a = total_knn_acc/iterations*100))
+# knn_acc = Parallel(n_jobs=-1)(delayed(ml)(df, test, rndm=i) for i in range(0,iterations))
+# total_knn_acc = sum(knn_acc)
+# print("avg algorithm acc: {a:5.2f}%".format(a = total_knn_acc/iterations*100))
 
 # # with tqdm(total=iterations) as prog_bar:
 # for i in range(0,iterations):
@@ -205,5 +208,11 @@ print("avg knn acc: {a:5.2f}%".format(a = total_knn_acc/iterations*100))
 
 # print("avg knn acc: {a:5.2f}%".format(a = total_knn_acc/iterations*100))
 
+no_doc_gen_rdnF_60_none = ['known CAD', 'previous PCI', 'Diabetes', 'INCIDENT OF PRECORDIAL PAIN',
+       'RST ECG', 'male', '40-50']
+
+knn_acc = Parallel(n_jobs=-1)(delayed(ml)(df, no_doc_gen_rdnF_60_none, rndm=i) for i in range(0,iterations))
+total_knn_acc = sum(knn_acc)
+print("avg algorithm acc: {a:5.2f}%".format(a = total_knn_acc/iterations*100))
 
 print('\a')
