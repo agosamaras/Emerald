@@ -46,7 +46,9 @@ def perf_measure(y_actual, y_hat):
 
     return(TP, FP, TN, FN)
 
-data = pd.read_csv('/d/Σημειώσεις/PhD - EMERALD/CAD/src/cad_dset.csv')
+# data_path = '/d/Σημειώσεις/PhD - EMERALD/Extras/Parathyroid/input_data2.csv'
+data_path = '/mnt/c/Users/samar/Documents/PhD - EMERALD/Extras/Parathyroid/input_data.csv'
+data = pd.read_csv(data_path)
 # print(data.columns)
 # print(data.values)
 dataframe = pd.DataFrame(data.values, columns=data.columns)
@@ -404,7 +406,7 @@ def ml(df,subset):
         print("PROGRESS: {a:5.2f}%".format(a =float(i)/float(total)))
 
 # create a dataframe from the data and read it
-df = pd.read_csv('/d/Σημειώσεις/PhD - EMERALD/CAD/src/cad_dset.csv')
+df = pd.read_csv(data_path)
 test = ['known CAD', 'previous AMI', 'previous PCI', 'previous CABG', 'previous STROKE', 'Diabetes', 'Smoking', 'Arterial Hypertension', 'Dislipidemia', 'Angiopathy',
 'Chronic Kindey Disease','Family History of CAD','ASYMPTOMATIC','ATYPICAL SYMPTOMS','ANGINA LIKE','DYSPNOEA ON EXERTION','INCIDENT OF PRECORDIAL PAIN','RST ECG','male','Overweight',
 'Obese','normal_weight','<40','40-50','50-60','>60','CNN_Healthy']

@@ -2,7 +2,6 @@ import numpy as np
 import matplotlib.pyplot as plt
 import pandas as pd
 from sklearn import metrics
-from sklearn.model_selection import train_test_split
 from sklearn.model_selection import cross_validate
 from sklearn import svm
 from sklearn import linear_model
@@ -14,7 +13,9 @@ from mlxtend.feature_selection import SequentialFeatureSelector as SFS
 from genetic_selection import GeneticSelectionCV
 from imblearn.over_sampling import SMOTE
 from imblearn.pipeline import Pipeline
+from imblearn.over_sampling import RandomOverSampler
 from sklearn.model_selection import RepeatedStratifiedKFold
+from sklearn.model_selection import StratifiedKFold
 from sklearn.model_selection import cross_val_score
 from sklearn.model_selection import cross_val_predict
 from typing import Tuple
@@ -43,11 +44,9 @@ def perf_measure(y_actual, y_hat):
 
 # function to store predictions for each fold of Repeated Stratified KFold
 def val_predict(model, kfold : RepeatedStratifiedKFold, X : np.array, y : np.array) -> Tuple[np.array, np.array, np.array]:
-
+    # initialization
     model_ = cp.deepcopy(model)
-    
     no_classes = len(np.unique(y))
-    
     actual_classes = np.empty([0], dtype=int)
     predicted_classes = np.empty([0], dtype=int)
     predicted_proba = np.empty([0, no_classes]) 
@@ -68,9 +67,74 @@ def val_predict(model, kfold : RepeatedStratifiedKFold, X : np.array, y : np.arr
 
     return actual_classes, predicted_classes, predicted_proba
 
+# function to print SHAP values and plots
+def xai(model, X, val):
+    shap_values = shap.TreeExplainer(model).shap_values(X)
+    shap.summary_plot(shap_values[val], X)
+    for feature in X.columns:
+        print(feature)
+        shap.dependence_plot(feature, shap_values[0], X)
+    # shap.force_plot(explainer.expected_value, shap_values, X)
+    p = shap.force_plot(shap.TreeExplainer(model).expected_value, shap_values, X, matplotlib = True, show = False)
+    plt.savefig('tmp.svg')
+    plt.close()
+    return(p)
+
+def xai_svm(model, X, idx):
+    explainer = shap.KernelExplainer(model.predict, X.values[idx])
+    shap_values = explainer.shap_values(X)
+    shap.summary_plot(shap_values, X)
+    # shap.summary_plot(shap_values, X, plot_type='violin')
+    for feature in X.columns:
+        print(feature)
+        shap.dependence_plot(feature, shap_values, X)
+    shap.force_plot(explainer.expected_value, shap_values, X)
+
+# function for random oversampling predict
+def rndm_osmpl(model, kfold, X, y) -> Tuple[np.array, np.array, np.array]:
+    # initialization
+    y_pred = []
+    y_actual = []
+    oversample = RandomOverSampler(sampling_strategy='not majority')
+    model_ = cp.deepcopy(model)
+    tp = 0
+    fp = 0
+    tn = 0
+    fn = 0
+    for train_index, test_index in kfold.split(X.values, y.values):
+        # Split the data into train and test sets for the current fold
+        X_train, X_test = X.values[train_index], X.values[test_index]
+        y_train, y_test = y.values[train_index], y.values[test_index]
+        X_over, y_over = oversample.fit_resample(X_train, y_train)
+        est = model_.fit(X_over, y_over)
+        n_yhat = est.predict(X_test)
+
+        # xai(est, X_train, 0)
+        xai_svm(est, X, train_index)
+
+        tpa, fpa, tna, fna = perf_measure(y_test, n_yhat)
+        tp = tp + tpa
+        fp = fp + fpa
+        tn = tn + tna
+        fn = fn + fna
+        y_pred.extend(n_yhat)
+        y_actual.extend(y_test)
+
+    # print("TP/FP/TN/FN: ", tp, fp, tn, fn)
+    # print("confusion matrix:\n", metrics.confusion_matrix(y_actual, y_pred, labels=[0,1]))
+    plot_confusion_matrix(y_actual, y_pred, [0, 1])
+    report = metrics.classification_report(y_actual, y_pred, labels=None, target_names=None, sample_weight=None, digits=2, output_dict=True, zero_division='warn')
+    print("metrics:\n", report)
+    roc = metrics.roc_auc_score(y_actual, y_pred)
+    # print("roc:\n", roc)
+    # fpr, tpr, _ = metrics.roc_curve(y_actual, y_pred)
+    # display = metrics.RocCurveDisplay(fpr=fpr, tpr=tpr, roc_auc=roc, estimator_name='SVM')
+    # display.plot()
+    # plt.show()
+    return report["0"]["recall"], report["1"]["recall"], report["accuracy"], roc
+
 # function for printing confusion matrix
 def plot_confusion_matrix(actual_classes : np.array, predicted_classes : np.array, sorted_labels : list):
-
     matrix = metrics.confusion_matrix(actual_classes, predicted_classes, labels=sorted_labels)
     
     plt.figure(figsize=(12.8,6))
@@ -79,8 +143,16 @@ def plot_confusion_matrix(actual_classes : np.array, predicted_classes : np.arra
 
     plt.show()
 
-data = pd.read_csv('/d/Σημειώσεις/PhD - EMERALD/Extras/Parathyroid/input_data2.csv')
+def plot_2D_confusion_matrix_by_values(tp, fp, tn, fn, sorted_labels : list):
+    matrix = [[tn, fp,],[fn, tp]] 
+    plt.figure(figsize=(12.8,6))
+    sns.heatmap(matrix, annot=True, xticklabels=sorted_labels, yticklabels=sorted_labels, cmap="Blues", fmt="g")
+    plt.xlabel('Predicted'); plt.ylabel('Actual'); plt.title('Confusion Matrix')
+    plt.show()
 
+# data_path = '/d/Σημειώσεις/PhD - EMERALD/Extras/Parathyroid/input_data2.csv'
+data_path = '/mnt/c/Users/samar/Documents/PhD - EMERALD/Extras/Parathyroid/input_data.csv'
+data = pd.read_csv(data_path)
 # print(data.columns)
 # print(data.values)
 dataframe = pd.DataFrame(data.values, columns=data.columns)
@@ -148,50 +220,8 @@ knn = KNeighborsClassifier(n_neighbors=3) # Avg CV-10 Testing Accuracy: 79.92% /
 
 
 ############################
-#### Best Result So Far ####
-############################
-gen_knn = ['known CAD', 'previous AMI', 'previous CABG', 'Diabetes', 'Smoking',
-              'Arterial Hypertension', 'Dislipidemia', 'Angiopathy',
-              'Chronic Kindey Disease', 'ASYMPTOMATIC', 'ATYPICAL SYMPTOMS',
-              'ANGINA LIKE', 'INCIDENT OF PRECORDIAL PAIN', 'male', 'Overweight',
-              '<40', '50-60', 'Doctor: Healthy'] # knn (n=13) features from genetic selection 83,89% -> cv-10: 83.01% / manual: 80.36%
-gen_dt = ['previous AMI', 'previous CABG', 'Arterial Hypertension', 'Angiopathy',
-             'Chronic Kindey Disease', 'Family History of CAD', 'ANGINA LIKE',
-             'male', '<40', 'Doctor: Healthy'] # dt 83,89% -> cv-10: 81,96% / manual: 79,84%
-gen_rdnF_80_none = ['known CAD', 'previous PCI', 'Diabetes', 'Chronic Kindey Disease',
-       'ANGINA LIKE', 'RST ECG', 'male', '<40', 'Doctor: Healthy'] # rndF 84,41% -> cv-10: 83,02% / manual: 81,13% # good results, small feature set each time
-gen_svm = ['known CAD', 'previous PCI', 'previous CABG', 'Diabetes', 'Smoking',
-       'Dislipidemia', 'Angiopathy', 'Chronic Kindey Disease', 'ASYMPTOMATIC',
-       'ATYPICAL SYMPTOMS', 'ANGINA LIKE', 'RST ECG', 'male', '40-50',
-       'Doctor: Healthy'] # svm 86,51% -> cv-10: 82,66% / manual:
-gen_ada_150 = ['known CAD', 'previous STROKE', 'Diabetes', 'Family History of CAD',
-       'ATYPICAL SYMPTOMS', 'ANGINA LIKE', 'DYSPNOEA ON EXERTION',
-       'INCIDENT OF PRECORDIAL PAIN', 'RST ECG', 'male', 'Overweight', 'Obese',
-       '<40', 'Doctor: Healthy'] # ada 81,79% -> cv-10: 80,03
-
-SFS_svm = ['known CAD', 'previous PCI', 'previous CABG', 'Diabetes', 'Smoking', 'Dislipidemia', 
-              'Chronic Kindey Disease', 'Family History of CAD', 'ASYMPTOMATIC', 'ATYPICAL SYMPTOMS', 
-              'ANGINA LIKE', 'RST ECG', 'male', 'Overweight', 'Obese', '<40', '40-50', 'Doctor: Healthy'] # 82,13% -> cv-10: 82,13% / manual: 79,99%
-SFS_svm_fwd = ['known CAD', 'previous AMI', 'previous PCI', 'previous CABG', 'previous STROKE', 'Diabetes', 
-                  'Smoking', 'Arterial Hypertension', 'Dislipidemia', 'Angiopathy', 'Chronic Kindey Disease', 
-                  'Family History of CAD', 'ASYMPTOMATIC', 'ANGINA LIKE', 'INCIDENT OF PRECORDIAL PAIN', 
-                  'RST ECG', 'male', 'Overweight', 'Obese', '<40', '40-50', '>60', 'Doctor: Healthy'] # 81,78% -> cv-10: 81,78% / manual: 79,8%
-SFS_dt = ['known CAD', 'Smoking', 'Arterial Hypertension', 'Overweight', 'Doctor: Healthy'] # 79,69% -> cv-10: 78,63% / manual: 77,98%
-SFS_dt_fwd = ['known CAD', 'previous AMI', 'previous PCI', 'previous CABG', 'previous STROKE', 'Arterial Hypertension', 
-                     'Chronic Kindey Disease', 'ANGINA LIKE', 'INCIDENT OF PRECORDIAL PAIN', 'male', 'Overweight', '<40', 'Doctor: Healthy'] # 82,32% -> cv-10: 78,81% / manual: 79,1%
-SFS_knn = ['known CAD', 'previous AMI', 'previous CABG', 'Diabetes', 'Smoking', 'Arterial Hypertension', 'Dislipidemia', 'Angiopathy', 'ASYMPTOMATIC', 'ATYPICAL SYMPTOMS', 
-              'ANGINA LIKE', 'male', 'Overweight', '40-50', '>60', 'Doctor: Healthy'] # knn (n=13) 82,67% -> cv-10: 82,66% /  manual: 79,36%
-SFS_knn_fwd = ['previous AMI', 'previous CABG', 'previous STROKE', 'Diabetes', 'Arterial Hypertension', 'Angiopathy', 'Chronic Kindey Disease', 'Family History of CAD',
-                  'ATYPICAL SYMPTOMS', 'ANGINA LIKE', 'DYSPNOEA ON EXERTION', 'INCIDENT OF PRECORDIAL PAIN', 'male', 'Overweight', '<40', '40-50', '>60', 'Doctor: Healthy'] # knn (n=13) 82,49% -> cv-10: 82,14% /  manual: 78,92%
-sfs_ada = ['known CAD', 'previous AMI', 'Diabetes', 'Family History of CAD', 'ATYPICAL SYMPTOMS', 'ANGINA LIKE', 'INCIDENT OF PRECORDIAL PAIN', 'RST ECG', 'male', 'Overweight', 'Obese', '<40', 'Doctor: Healthy'] # 81,96% -> cv-10: 81,62%
-sfs_ada_fwd = ['previous CABG', 'Dislipidemia', 'Angiopathy', 'male', 'Doctor: Healthy'] # 80,74% -> cv-10: 80,74% /  manual: 80,26% (w 1000 iterations)
-sfs_rndF = ['Smoking', 'Angiopathy', 'Family History of CAD', 'ASYMPTOMATIC', 'ATYPICAL SYMPTOMS', 'RST ECG', 'normal_weight', '<40', '40-50', '>60', 'Doctor: Healthy'] # 79,86% -> cv-10: 75,48% /  manual: 78,82% (w 1000 iterations)
-sfs_rndF_fwd = ['known CAD', 'previous AMI', 'previous CABG', 'previous STROKE', 'Diabetes', 
-                   'Smoking', 'Chronic Kindey Disease', 'ANGINA LIKE', 'DYSPNOEA ON EXERTION', 'INCIDENT OF PRECORDIAL PAIN', 'RST ECG', 'male', '>60', 'Doctor: Healthy'] # 80,74% -> cv-10: 77,23% /  manual: 79,28% (w 1000 iterations)
-############################
 X = x
-# sel_features = gen_knn  
-sel_alg = rndF
+sel_alg = svm
 
 ################################
 ### Drop unnecessary fields ####
@@ -203,34 +233,102 @@ sel_alg = rndF
 #         X = X.drop(feature, axis=1)
 
 sel_fit = sel_alg.fit(X, y)
-n_yhat = sel_fit.predict(X)
 n_yhat = cross_val_predict(sel_alg, X, y)
 print("Testing Accuracy: {a:5.2f}%".format(a = 100*metrics.accuracy_score(y, n_yhat)))
 
-#############
-### CV-10 ###
-#############
-# cross-validate result(s) 10fold
-# print(metrics.get_scorer_names())
-# cv_results = cross_validate(sel_alg, X, y, cv=10, scoring=('accuracy'))
-cv_results = cross_validate(sel_alg, X, y, cv=10)
-# sorted(cv_results.keys())
-print("Avg CV-10 Testing Accuracy: {a:5.2f}%".format(a = 100*sum(cv_results['test_score'])/len(cv_results['test_score'])))
-print("metrics:\n", metrics.classification_report(y, n_yhat, labels=None, target_names=None, sample_weight=None, digits=2, output_dict=True, zero_division='warn'))
-print("f1_score: ", metrics.f1_score(y, n_yhat, average='weighted'))
-print("jaccard_score: ", metrics.jaccard_score(y, n_yhat,pos_label=1))
-print("confusion matrix:\n", metrics.confusion_matrix(y, n_yhat, labels=[0,1]))
-print("TP/FP/TN/FN: ", perf_measure(y, n_yhat))
-plot_confusion_matrix(y, n_yhat, [0, 1])
+# #############
+# ### CV-10 ###
+# #############
+# # cross-validate result(s) 10fold
+# # print(metrics.get_scorer_names())
+# # cv_results = cross_validate(sel_alg, X, y, cv=10, scoring=('accuracy'))
+# cv_results = cross_validate(sel_alg, X, y, cv=10)
+# # sorted(cv_results.keys())
+# print("Avg CV-10 Testing Accuracy: {a:5.2f}%".format(a = 100*sum(cv_results['test_score'])/len(cv_results['test_score'])))
+# print("metrics:\n", metrics.classification_report(y, n_yhat, labels=None, target_names=None, sample_weight=None, digits=2, output_dict=True, zero_division='warn'))
+# print("f1_score: ", metrics.f1_score(y, n_yhat, average='weighted'))
+# print("jaccard_score: ", metrics.jaccard_score(y, n_yhat,pos_label=1))
+# print("confusion matrix:\n", metrics.confusion_matrix(y, n_yhat, labels=[0,1]))
+# print("TP/FP/TN/FN: ", perf_measure(y, n_yhat))
+# plot_confusion_matrix(y, n_yhat, [0, 1])
 
-###########
-### XAI ###
-###########
-shap_values = shap.TreeExplainer(sel_alg).shap_values(X)
-shap.summary_plot(shap_values[0], X)
-for feature in X.columns:
-    print(feature)
-    shap.dependence_plot(feature, shap_values[0], X)
+
+##############
+### RANDOM ###
+##############
+cv = StratifiedKFold(n_splits=10, random_state=0, shuffle=True)
+rndm_osmpl(sel_alg, cv, X, y)
+
+# # Loop to find the optimal ML model
+# models = [svm, dt, knn, rndF, ada]
+# runs = 50
+# best_0 = 0
+# best_1 = 0
+# best_acc = 0
+# best_roc = 0
+
+# for model in models:
+#     tot_0 = 0
+#     tot_1 = 0
+#     tot_acc = 0
+#     tot_roc = 0
+#     for i in range (0,runs):
+#         recall_0, recall_1, acc, roc = rndm_osmpl(model, cv, X, y)
+#         tot_0 += recall_0
+#         tot_1 += recall_1
+#         tot_acc += acc
+#         tot_roc += roc
+#     avg_0 = tot_0/runs
+#     avg_1 = tot_1/runs
+#     avg_acc = tot_acc/runs
+#     avg_roc = tot_roc/runs
+#     # Smaller CLass Accuracy based selection
+#     if avg_1 > best_1:
+#         best_1 = avg_1
+#         print(model, ": ", best_1, " ## acc: ", avg_acc)
+#     elif avg_1 == best_1:
+#         if avg_0 > best_0:
+#             best_1 = avg_1
+#             print(model, ": ", best_1, " ## acc: ", avg_acc)
+#     # # ROC_AUC based selection
+#     # if avg_roc > best_roc:
+#     #     best_roc = avg_roc
+#     #     print(model, ": ", best_roc, " ## avg_acc: ", avg_acc, " ## avg_0: ", avg_0, " ## avg_1: ", avg_1)
+#     if avg_acc > best_acc:
+#         best_acc = avg_acc
+#         print(model, ": ", avg_acc, " ## avg_0: ", avg_0, " ## avg_1: ", avg_1)
+
+
+# X2 = X.to_numpy()
+# y2 = y.to_numpy()
+# X = X2
+# y = y2
+# oversample = RandomOverSampler(sampling_strategy='not majority')
+# for train_index, test_index in cv.split(X, y):
+#     # Split the data into train and test sets for the current fold
+#     X_train, X_test = X[train_index], X[test_index]
+#     y_train, y_test = y[train_index], y[test_index]
+#     X_over, y_over = oversample.fit_resample(X, y)
+#     model = sel_alg
+#     model.fit(X_over, y_over)
+#     n_yhat = sel_fit.predict(X_over)
+#     print("confusion matrix:\n", metrics.confusion_matrix(y_over, n_yhat, labels=[0,1]))
+#     score = model.score(X_over, y_over)
+#     scores.append(score)
+#     print("acc: ", score)
+# # Calculate the mean evaluation score
+# mean_score = np.mean(scores)
+# print(f'Mean score with random replications: {mean_score:.3f}')
+
+
+# ###########
+# ### XAI ###
+# ###########
+# shap_values = shap.TreeExplainer(sel_alg).shap_values(X)
+# shap.summary_plot(shap_values[0], X)
+# for feature in X.columns:
+#     print(feature)
+#     shap.dependence_plot(feature, shap_values[0], X)
 
 # #############
 # ### SMOTE ###
