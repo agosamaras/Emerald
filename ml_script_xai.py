@@ -6,9 +6,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import pandas as pd
 import numpy as np
-from sklearn import preprocessing
 from sklearn import metrics
-from sklearn.model_selection import train_test_split
 from sklearn.model_selection import cross_val_predict
 from sklearn.model_selection import cross_validate
 from sklearn import metrics
@@ -17,15 +15,36 @@ from sklearn import linear_model
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.ensemble import AdaBoostClassifier
-from sklearn import tree
 from mlxtend.feature_selection import SequentialFeatureSelector as SFS
-import itertools
-import sys
-import multiprocessing
-from tqdm import tqdm #tqmd progress bar
-
 from genetic_selection import GeneticSelectionCV
 from sklearn.tree import DecisionTreeClassifier
+import shap
+
+def cohen_effect_size(X, y):
+    """Calculates the Cohen effect size of each feature.
+    
+        Parameters
+        ----------
+        X : {array-like, sparse matrix}, shape = [n_samples, n_features]
+            Training vector, where n_samples in the number of samples and
+            n_features is the number of features.
+        y : array-like, shape = [n_samples]
+            Target vector relative to X
+        Returns
+        -------
+        cohen_effect_size : array, shape = [n_features,]
+            The set of Cohen effect values.
+        Notes
+        -----
+        Based on https://github.com/AllenDowney/CompStats/blob/master/effect_size.ipynb
+    """
+    group1, group2 = X[y==0], X[y==1]
+    diff = group1.mean() - group2.mean()
+    var1, var2 = group1.var(), group2.var()
+    n1, n2 = group1.shape[0], group2.shape[0]
+    pooled_var = (n1 * var1 + n2 * var2) / (n1 + n2)
+    d = diff / np.sqrt(pooled_var)
+    return d
 
 # function for printing each component of confusion matrix
 def perf_measure(y_actual, y_hat):
@@ -46,7 +65,80 @@ def perf_measure(y_actual, y_hat):
 
     return(TP, FP, TN, FN)
 
-data = pd.read_csv('/d/Σημειώσεις/PhD - EMERALD/CAD/src/cad_dset.csv')
+# function for printing each feature's SHAP value
+def shapley_feature_ranking(shap_values, X):
+    """Calculates the SHAP value of each feature.
+    
+        Parameters
+        ----------
+        shap_values : array-like, shape = [n_samples, n_features]
+            vector, where n_samples in the number of samples and
+            n_features is the number of features.
+        X : {array-like, sparse matrix}, shape = [n_samples, n_features]
+            Training vector, where n_samples in the number of samples and
+            n_features is the number of features.
+        Returns
+        -------
+        pd.DataFrame [n_features, 2]
+            Dataframe containing feature names and according SHAP value.
+    """
+    feature_order = np.argsort(np.mean(shap_values, axis=0))
+    return pd.DataFrame(
+        {
+            "features": [X.columns[i] for i in feature_order][::-1],
+            "importance": [
+                np.mean(shap_values, axis=0)[i] for i in feature_order
+            ][::-1],
+        }
+    )
+
+# function to print SHAP values and plots
+def xai(model, X, val):
+    explainer = shap.TreeExplainer(model)
+    shap_values = explainer.shap_values(X)
+    ###
+    sv = explainer(X)
+    exp = shap.Explanation(sv[:,:,1], sv.base_values[:,1], X, feature_names=X.columns)
+    idx = 540 # datapoint to explain
+    shap.waterfall_plot(exp[idx])
+    ###
+
+    shap.summary_plot(shap_values[val], X)
+    # shap.summary_plot(shap_values[0], X, plot_type="bar")
+    shap.summary_plot(shap_values[0], X, plot_type='violin')
+    # for feature in X.columns:
+    #     print(feature)
+    #     shap.dependence_plot(feature, shap_values[0], X)
+    shap.force_plot(explainer.expected_value[0], shap_values[0][0], X.iloc[0,:], matplotlib=True)
+
+    ###
+    shap_rank = shapley_feature_ranking(shap_values[0], X)
+    shap_rank.sort_values(by="importance", ascending=False)
+    print(shap_rank)
+
+def xai_svm(model, X, idx):
+    explainer = shap.KernelExplainer(model.predict, X.values[idx])
+    shap_values = explainer.shap_values(X)
+    ###
+    index = 2 # datapoint to explain
+    sv = explainer.shap_values(X.loc[[index]])
+    exp = shap.Explanation(sv,explainer.expected_value, data=X.loc[[index]].values, feature_names=X.columns)
+    shap.waterfall_plot(exp[0])
+    ###
+    shap.summary_plot(shap_values, X)
+    # shap.summary_plot(shap_values, X, plot_type="bar")
+    shap.summary_plot(shap_values, X, plot_type='violin')
+    for feature in X.columns:
+        print(feature)
+        shap.dependence_plot(feature, shap_values, X)
+    shap.force_plot(explainer.expected_value, shap_values[index,:], X.iloc[index,:], matplotlib=True)
+
+    ###
+    shap_rank = shapley_feature_ranking(shap_values, X)
+    shap_rank.sort_values(by="importance", ascending=False)
+    print(shap_rank)
+
+data = pd.read_csv('/d/Σημειώσεις/PhD - EMERALD/1. CAD/src/cad_dset.csv')
 # print(data.columns)
 # print(data.values)
 dataframe = pd.DataFrame(data.values, columns=data.columns)
@@ -98,8 +190,8 @@ no_doc_rdnF_60_none = ['known CAD', 'previous PCI', 'Diabetes', 'INCIDENT OF PRE
 
 x = x_nodoc #TODO ucommment when running w/o doctor
 X = x
-sel_features = no_doc_rdnF_60_none
-sel_alg = rndF
+sel_features = X.columns
+sel_alg = svm
 
 ##############
 ### CV-10 ####
@@ -110,8 +202,9 @@ for feature in x.columns:
     else:
         X = X.drop(feature, axis=1)
 
-sel = sel_alg.fit(X, y)
-n_yhat = sel.predict(X)
+est = sel_alg.fit(X, y)
+# n_yhat = est.predict(X)
+n_yhat = cross_val_predict(est, X, y, cv=10)
 print("Testing Accuracy: {a:5.2f}%".format(a = 100*metrics.accuracy_score(y, n_yhat)))
 
 # cross-validate result(s) 10fold
@@ -124,16 +217,35 @@ print("jaccard_score: ", metrics.jaccard_score(y, n_yhat,pos_label=1))
 print("confusion matrix:\n", metrics.confusion_matrix(y, n_yhat, labels=[0,1]))
 print("TP/FP/TN/FN: ", perf_measure(y, n_yhat))
 
-print("###### XAI ######")
-print(sel.feature_names_in_) # feature names
-print(sel.feature_importances_) # feature importance
-for name, importance in zip(sel.feature_names_in_,sel.feature_importances_):
-   print(f"{name : <50}{importance:1.4f}")
-   # print(f"{importance:1.4f}")
+# print("###### XAI ######")
+# # print(est.feature_names_in_) # feature names
+# # print(est.feature_importances_) # feature importance
+# for name, importance in zip(est.feature_names_in_,est.feature_importances_):
+#    print(f"{name : <50}{importance:1.4f}")
+#    # print(f"{importance:1.4f}")
 
 # # ONLY for SVM & KNN
 # from sklearn.inspection import permutation_importance
-# perm_importance = permutation_importance(sel, X, y)
-# for name, importance in zip(sel.feature_names_in_,perm_importance.importances_mean):
+# perm_importance = permutation_importance(est, X, y)
+# for name, importance in zip(est.feature_names_in_,perm_importance.importances_mean):
 #    print(f"{name : <50}{importance:1.4f}")
 #    # print(f"{importance:1.4f}")
+
+
+print("###### SHAP ######")
+print('Number of features %d' % len(est.feature_names_in_))
+effect_sizes = cohen_effect_size(X, y)
+effect_sizes.reindex(effect_sizes.abs().sort_values(ascending=False).nlargest(40).index)[::-1].plot.barh(figsize=(6, 10))
+plt.title('Features with the largest effect sizes')
+plt.show()
+
+# xai(est, X, 0)
+# xai_svm(est, X, pd.core.indexes.range.RangeIndex(start=0, stop=2, step=1))
+xai_svm(est, X, X.index)
+
+
+# summary plot
+# waterfall (1 Cad, 1 Healthy)
+# Dependence plot?
+# cohen plot
+# Μόνο χωρίς γιατρό

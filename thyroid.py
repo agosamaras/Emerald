@@ -150,8 +150,8 @@ def plot_2D_confusion_matrix_by_values(tp, fp, tn, fn, sorted_labels : list):
     plt.xlabel('Predicted'); plt.ylabel('Actual'); plt.title('Confusion Matrix')
     plt.show()
 
-# data_path = '/d/Σημειώσεις/PhD - EMERALD/Extras/Parathyroid/input_data2.csv'
-data_path = '/mnt/c/Users/samar/Documents/PhD - EMERALD/Extras/Parathyroid/input_data.csv'
+data_path = '/d/Σημειώσεις/PhD - EMERALD/3. Extras/Parathyroid/input_data.csv'
+# data_path = '/mnt/c/Users/samar/Documents/PhD - EMERALD/Extras/Parathyroid/input_data.csv'
 data = pd.read_csv(data_path)
 # print(data.columns)
 # print(data.values)
