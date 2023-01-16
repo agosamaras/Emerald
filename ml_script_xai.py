@@ -120,9 +120,11 @@ def xai_svm(model, X, idx):
     explainer = shap.KernelExplainer(model.predict, X.values[idx])
     shap_values = explainer.shap_values(X)
     ###
-    index = 2 # datapoint to explain
+    index = 2 # datapoint to explain (healthy)
     sv = explainer.shap_values(X.loc[[index]])
     exp = shap.Explanation(sv,explainer.expected_value, data=X.loc[[index]].values, feature_names=X.columns)
+    sv = explainer.shap_values(X.loc[[9]]) # CAD
+    exp = shap.Explanation(sv,explainer.expected_value, data=X.loc[[9]].values, feature_names=X.columns)
     shap.waterfall_plot(exp[0])
     ###
     shap.summary_plot(shap_values, X)
@@ -132,6 +134,7 @@ def xai_svm(model, X, idx):
         print(feature)
         shap.dependence_plot(feature, shap_values, X)
     shap.force_plot(explainer.expected_value, shap_values[index,:], X.iloc[index,:], matplotlib=True)
+    shap.force_plot(explainer.expected_value, shap_values[9,:], X.iloc[9,:], matplotlib=True)
 
     ###
     shap_rank = shapley_feature_ranking(shap_values, X)
@@ -191,7 +194,7 @@ no_doc_rdnF_60_none = ['known CAD', 'previous PCI', 'Diabetes', 'INCIDENT OF PRE
 x = x_nodoc #TODO ucommment when running w/o doctor
 X = x
 sel_features = X.columns
-sel_alg = svm
+sel_alg = knn
 
 ##############
 ### CV-10 ####
