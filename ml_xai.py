@@ -18,6 +18,7 @@ from sklearn.ensemble import AdaBoostClassifier
 from mlxtend.feature_selection import SequentialFeatureSelector as SFS
 from genetic_selection import GeneticSelectionCV
 from sklearn.tree import DecisionTreeClassifier
+from tabpfn import TabPFNClassifier
 import shap
 
 def cohen_effect_size(X, y):
@@ -99,17 +100,20 @@ def xai(model, X, val):
     ###
     sv = explainer(X)
     exp = shap.Explanation(sv[:,:,1], sv.base_values[:,1], X, feature_names=X.columns)
-    idx = 540 # datapoint to explain
-    shap.waterfall_plot(exp[idx])
+    idx_healthy = 2 # datapoint to explain (healthy)
+    idx_cad = 9 # datapoint to explain (CAD)
+    shap.waterfall_plot(exp[idx_healthy])
+    shap.waterfall_plot(exp[idx_cad])
     ###
 
     shap.summary_plot(shap_values[val], X)
     # shap.summary_plot(shap_values[0], X, plot_type="bar")
     shap.summary_plot(shap_values[0], X, plot_type='violin')
-    # for feature in X.columns:
-    #     print(feature)
-    #     shap.dependence_plot(feature, shap_values[0], X)
+    for feature in X.columns:
+        print(feature)
+        shap.dependence_plot(feature, shap_values[0], X)
     shap.force_plot(explainer.expected_value[0], shap_values[0][0], X.iloc[0,:], matplotlib=True)
+    shap.force_plot(explainer.expected_value[1], shap_values[0][0], X.iloc[0,:], matplotlib=True)
 
     ###
     shap_rank = shapley_feature_ranking(shap_values[0], X)
@@ -120,11 +124,13 @@ def xai_svm(model, X, idx):
     explainer = shap.KernelExplainer(model.predict, X.values[idx])
     shap_values = explainer.shap_values(X)
     ###
-    index = 2 # datapoint to explain (healthy)
-    sv = explainer.shap_values(X.loc[[index]])
-    exp = shap.Explanation(sv,explainer.expected_value, data=X.loc[[index]].values, feature_names=X.columns)
-    sv = explainer.shap_values(X.loc[[9]]) # CAD
-    exp = shap.Explanation(sv,explainer.expected_value, data=X.loc[[9]].values, feature_names=X.columns)
+    idx_healthy = 2 # datapoint to explain (healthy)
+    idx_cad = 9 # datapoint to explain (CAD)
+    sv = explainer.shap_values(X.loc[[idx_healthy]])
+    exp = shap.Explanation(sv,explainer.expected_value, data=X.loc[[idx_healthy]].values, feature_names=X.columns)
+    shap.waterfall_plot(exp[0])
+    sv = explainer.shap_values(X.loc[[idx_cad]]) # CAD
+    exp = shap.Explanation(sv,explainer.expected_value, data=X.loc[[idx_cad]].values, feature_names=X.columns)
     shap.waterfall_plot(exp[0])
     ###
     shap.summary_plot(shap_values, X)
@@ -133,8 +139,8 @@ def xai_svm(model, X, idx):
     for feature in X.columns:
         print(feature)
         shap.dependence_plot(feature, shap_values, X)
-    shap.force_plot(explainer.expected_value, shap_values[index,:], X.iloc[index,:], matplotlib=True)
-    shap.force_plot(explainer.expected_value, shap_values[9,:], X.iloc[9,:], matplotlib=True)
+    shap.force_plot(explainer.expected_value, shap_values[idx_healthy,:], X.iloc[idx_healthy,:], matplotlib=True)
+    shap.force_plot(explainer.expected_value, shap_values[idx_cad,:], X.iloc[idx_cad,:], matplotlib=True)
 
     ###
     shap_rank = shapley_feature_ranking(shap_values, X)
@@ -156,9 +162,10 @@ y = dataframe['CAD'].astype(int)
 svm = svm.SVC(kernel='rbf')
 lr = linear_model.LinearRegression()
 dt = DecisionTreeClassifier()
-rndF = RandomForestClassifier(max_depth=None, random_state=0, n_estimators=60) #TODO n_estimators=80 when testing with doctor, 60 w/o doctor
+rndF = RandomForestClassifier(max_depth=None, random_state=0, n_estimators=80) #TODO n_estimators=80 when testing with doctor, 60 w/o doctor
 ada = AdaBoostClassifier(n_estimators=30, random_state=0) #TODO n_estimators=150 when testing with doctor, 30 w/o doctor
 knn = KNeighborsClassifier(n_neighbors=20) #TODO n_neighbors=13 when testing with doctor, 20 w/o doctor
+tab = TabPFNClassifier(device='cpu', N_ensemble_configurations=26)
 
 
 
@@ -193,8 +200,8 @@ no_doc_rdnF_60_none = ['known CAD', 'previous PCI', 'Diabetes', 'INCIDENT OF PRE
 
 x = x_nodoc #TODO ucommment when running w/o doctor
 X = x
-sel_features = X.columns
-sel_alg = knn
+sel_features = no_doc_dt
+sel_alg = tab
 
 ##############
 ### CV-10 ####
@@ -236,7 +243,7 @@ print("TP/FP/TN/FN: ", perf_measure(y, n_yhat))
 
 
 print("###### SHAP ######")
-print('Number of features %d' % len(est.feature_names_in_))
+# print('Number of features %d' % len(est.feature_names_in_))
 effect_sizes = cohen_effect_size(X, y)
 effect_sizes.reindex(effect_sizes.abs().sort_values(ascending=False).nlargest(40).index)[::-1].plot.barh(figsize=(6, 10))
 plt.title('Features with the largest effect sizes')

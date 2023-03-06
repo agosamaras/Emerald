@@ -69,26 +69,44 @@ def val_predict(model, kfold : RepeatedStratifiedKFold, X : np.array, y : np.arr
 
 # function to print SHAP values and plots
 def xai(model, X, val):
-    shap_values = shap.TreeExplainer(model).shap_values(X)
+    explainer = shap.TreeExplainer(model)
+    shap_values = explainer.shap_values(X)
     shap.summary_plot(shap_values[val], X)
-    for feature in X.columns:
-        print(feature)
-        shap.dependence_plot(feature, shap_values[0], X)
-    # shap.force_plot(explainer.expected_value, shap_values, X)
-    p = shap.force_plot(shap.TreeExplainer(model).expected_value, shap_values, X, matplotlib = True, show = False)
-    plt.savefig('tmp.svg')
-    plt.close()
-    return(p)
+    # for feature in X.columns:
+    #     print(feature)
+    #     shap.dependence_plot(feature, shap_values[0], X)
+    ###
+    # sv = explainer(X)
+    # exp = shap.Explanation(sv[:,:,1], sv.base_values[:,1], X, feature_names=X.columns)
+    # idx_mg = 2 # datapoint to explain (MG)
+    # idx_s = 9 # datapoint to explain (S)
+    # shap.waterfall_plot(exp[idx_mg])
+    # shap.waterfall_plot(exp[idx_s])
+    ###
+    # shap.force_plot(explainer.expected_value[0], shap_values[0][0], X.iloc[0,:], matplotlib=True)
+    # shap.force_plot(explainer.expected_value[1], shap_values[0][0], X.iloc[0,:], matplotlib=True)
+    return shap_values
 
 def xai_svm(model, X, idx):
     explainer = shap.KernelExplainer(model.predict, X.values[idx])
     shap_values = explainer.shap_values(X)
+    print(shap_values.shape)
     shap.summary_plot(shap_values, X)
     # shap.summary_plot(shap_values, X, plot_type='violin')
-    for feature in X.columns:
-        print(feature)
-        shap.dependence_plot(feature, shap_values, X)
-    shap.force_plot(explainer.expected_value, shap_values, X)
+    # for feature in X.columns:
+    #     print(feature)
+    #     shap.dependence_plot(feature, shap_values, X)
+    # idx_mg = 2 # datapoint to explain (MG)
+    # idx_s = 9 # datapoint to explain (S)
+    # sv = explainer.shap_values(X.loc[[idx_mg]])
+    # exp = shap.Explanation(sv,explainer.expected_value, data=X.loc[[idx_mg]].values, feature_names=X.columns)
+    # shap.waterfall_plot(exp[0])
+    # sv = explainer.shap_values(X.loc[[idx_s]])
+    # exp = shap.Explanation(sv,explainer.expected_value, data=X.loc[[idx_s]].values, feature_names=X.columns)
+    # shap.waterfall_plot(exp[0])
+    # shap.force_plot(explainer.expected_value, shap_values[idx_mg,:], X.iloc[idx_mg,:], matplotlib=True)
+    # shap.force_plot(explainer.expected_value, shap_values[idx_s,:], X.iloc[idx_s,:], matplotlib=True)
+    return shap_values
 
 # function for random oversampling predict
 def rndm_osmpl(model, kfold, X, y) -> Tuple[np.array, np.array, np.array]:
@@ -163,12 +181,16 @@ y = dataframe['MULTIGLAND'].astype(int)
 # print("y:\n",y)
 
 # ml algorithms initialization
-svm = svm.SVC(kernel='rbf') # Avg CV-10 Testing Accuracy: 81.52% / '0recall': 0.9578947368421052 / '1recall': 0.7083333333333334
+svmn = svm.SVC(kernel='rbf') # Avg CV-10 Testing Accuracy: 81.52% / '0recall': 0.9578947368421052 / '1recall': 0.7083333333333334
 lr = linear_model.LinearRegression()
 dt = DecisionTreeClassifier() # Avg CV-10 Testing Accuracy: 84.92%% / '0recall':  0.9789473684210527 / '1recall': 0.75
+# metrics: {'0': {'precision': 0.9230769230769231, 'recall': 0.8842105263157894, 'f1-score': 0.9032258064516129, 'support': 95}, '1': {'precision': 0.6071428571428571, 'recall': 0.7083333333333334, 'f1-score': 0.6538461538461539, 'support': 24}, 'accuracy': 0.8487394957983193, 'macro avg': {'precision': 0.7651098901098901, 'recall': 0.7962719298245614, 'f1-score': 0.7785359801488834, 'support': 119}, 'weighted avg': {'precision': 0.8593591282666913, 'recall': 0.8487394957983193, 'f1-score': 0.8529307504639573, 'support': 119}}
 rndF = RandomForestClassifier(max_depth=None, random_state=0, n_estimators=60) # Avg CV-10 Testing Accuracy: 85.76% / '0recall': 0.968421052631579 / '1recall': 0.8800438596491228
+# metrics: {'0': {'precision': 0.9213483146067416, 'recall': 0.8631578947368421, 'f1-score': 0.891304347826087, 'support': 95}, '1': {'precision': 0.5666666666666667, 'recall': 0.7083333333333334, 'f1-score': 0.6296296296296297, 'support': 24}, 'accuracy': 0.8319327731092437, 'macro avg': {'precision': 0.7440074906367041, 'recall': 0.7857456140350878, 'f1-score': 0.7604669887278583, 'support': 119}, 'weighted avg': {'precision': 0.8498158814087432, 'recall': 0.8319327731092437, 'f1-score': 0.8385296147444485, 'support': 119}}
 ada = AdaBoostClassifier(n_estimators=150, random_state=0) # Avg CV-10 Testing Accuracy: 79.92% / '0recall': 0.9157894736842105 / '1recall': 0.5416666666666666
+# metrics: {'0': {'precision': 0.9310344827586207, 'recall': 0.8526315789473684, 'f1-score': 0.8901098901098902, 'support': 95}, '1': {'precision': 0.5625, 'recall': 0.75, 'f1-score': 0.6428571428571429, 'support': 24}, 'accuracy': 0.8319327731092437, 'macro avg': {'precision': 0.7467672413793103, 'recall': 0.8013157894736842, 'f1-score': 0.7664835164835165, 'support': 119}, 'weighted avg': {'precision': 0.8567082005215879, 'recall': 0.8319327731092437, 'f1-score': 0.8402437898236218, 'support': 119}}
 knn = KNeighborsClassifier(n_neighbors=3) # Avg CV-10 Testing Accuracy: 79.92% / '0recall': 0.9578947368421052 / '1recall':  0.5833333333333334
+# metrics: {'0': {'precision': 0.8787878787878788, 'recall': 0.9157894736842105, 'f1-score': 0.8969072164948454, 'support': 95}, '1': {'precision': 0.6, 'recall': 0.5, 'f1-score': 0.5454545454545454, 'support': 24}, 'accuracy': 0.8319327731092437, 'macro avg': {'precision': 0.7393939393939394, 'recall': 0.7078947368421052, 'f1-score': 0.7211808809746953, 'support': 119}, 'weighted avg': {'precision': 0.8225617519735166, 'recall': 0.8319327731092437, 'f1-score': 0.8260260055287345, 'support': 119}}
 
 #############################################
 #### Genetic Algorithm Feature Selection ####
@@ -214,14 +236,14 @@ knn = KNeighborsClassifier(n_neighbors=3) # Avg CV-10 Testing Accuracy: 79.92% /
 #     print("Testing Accuracy: {a:5.2f}%".format(a = 100*metrics.accuracy_score(y, n_yhat)))
     
 #     # cross-validate result(s) 10fold
-#     cv_results = cross_validate(svm, X, y, cv=10)
+#     cv_results = cross_validate(svmn, X, y, cv=10)
 #     # sorted(cv_results.keys())
 #     print("Avg CV-10 Testing Accuracy: {a:5.2f}%".format(a = 100*sum(cv_results['test_score'])/len(cv_results['test_score'])))
 
 
 ############################
 X = x
-sel_alg = svm
+sel_alg = knn
 
 ################################
 ### Drop unnecessary fields ####
@@ -260,7 +282,7 @@ cv = StratifiedKFold(n_splits=10, random_state=0, shuffle=True)
 rndm_osmpl(sel_alg, cv, X, y)
 
 # # Loop to find the optimal ML model
-# models = [svm, dt, knn, rndF, ada]
+# models = [svmn, dt, knn, rndF, ada]
 # runs = 50
 # best_0 = 0
 # best_1 = 0

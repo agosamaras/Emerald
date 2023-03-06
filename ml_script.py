@@ -11,12 +11,17 @@ from sklearn import metrics
 from sklearn.model_selection import train_test_split
 from sklearn.model_selection import cross_val_predict
 from sklearn.model_selection import cross_validate
+from sklearn.model_selection import cross_val_score
 from sklearn import metrics
 from sklearn import svm
 from sklearn import linear_model
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.ensemble import AdaBoostClassifier
+from lightgbm import LGBMClassifier
+from catboost import CatBoostClassifier, Pool
+from tabpfn import TabPFNClassifier
+import xgboost
 from sklearn import tree
 from mlxtend.feature_selection import SequentialFeatureSelector as SFS
 import itertools
@@ -46,8 +51,8 @@ def perf_measure(y_actual, y_hat):
 
     return(TP, FP, TN, FN)
 
-# data_path = '/d/Σημειώσεις/PhD - EMERALD/Extras/Parathyroid/input_data2.csv'
-data_path = '/mnt/c/Users/samar/Documents/PhD - EMERALD/Extras/Parathyroid/input_data.csv'
+data_path = '/d/Σημειώσεις/PhD - EMERALD/1. CAD/src/cad_dset.csv'
+# data_path = '/mnt/c/Users/samar/Documents/PhD - EMERALD/Extras/Parathyroid/input_data.csv'
 data = pd.read_csv(data_path)
 # print(data.columns)
 # print(data.values)
@@ -66,24 +71,63 @@ dt = DecisionTreeClassifier()
 rndF = RandomForestClassifier(max_depth=None, random_state=0, n_estimators=60)
 ada = AdaBoostClassifier(n_estimators=150, random_state=0)
 knn = KNeighborsClassifier(n_neighbors=20) #TODO n_neighbors=13 when testing with doctor, 20 w/o doctor
+tab = TabPFNClassifier(device='cpu', N_ensemble_configurations=26)
+xgb = xgboost.XGBRegressor(objective="binary:hinge", random_state=42) # 68,48%
+light = LGBMClassifier(objective='binary', random_state=5, n_estimators=80, n_jobs=-1) # 72,16% / 80 -> 78,291
+best_params = {'bagging_temperature': 0.8,
+               'depth': 5,
+               'iterations': 500,
+               'l2_leaf_reg': 30,
+               'learning_rate': 0.05,
+               'random_strength': 0.8}
+
+catb = CatBoostClassifier(
+        **best_params,
+        loss_function='Logloss',
+        eval_metric='Accuracy',         
+#         task_type="GPU",
+        nan_mode='Min',
+        verbose=False
+    )
+
+# doc/no_doc parameterization
+sel_alg = light
+x = x_nodoc #TODO comment when not testing with doctor
+X = x_nodoc
+
+# selected_features = catb.select_features(
+#                 X,
+#                 y,
+#                 # eval_set=None,
+#                 features_for_select=X.columns.values,
+#                 num_features_to_select=10,
+#                 algorithm='RecursiveByShapValues',
+#                 # steps=None,
+#                 shap_calc_type='Regular',
+#                 train_final_model=True,
+#                 verbose=1,
+#                 logging_level=None,
+#                 plot=False,
+#                 log_cout=sys.stdout,
+#                 log_cerr=sys.stderr)
+# print("now: ", selected_features['selected_features_names'])
 
 #############################################
 #### Genetic Algorithm Feature Selection ####
 #############################################
 
 # for i in range (0,3):
-#     X = x
 #     print("run no ", i, ":")
 #     selector = GeneticSelectionCV(
-#         estimator=ada,
+#         estimator=sel_alg,
 #         cv=10,
 #         verbose=2,
 #         scoring="accuracy", 
-#         max_features=27, #TODO change to 27 when testing with doctor, 26 without
+#         max_features=26, #TODO change to 27 when testing with doctor, 26 without
 #         n_population=100,
 #         crossover_proba=0.8,
 #         mutation_proba=0.8,
-#         n_generations=1000,
+#         n_generations=200,
 #         crossover_independent_proba=0.8,
 #         mutation_independent_proba=0.4,
 #         tournament_size=5,
@@ -100,27 +144,18 @@ knn = KNeighborsClassifier(n_neighbors=20) #TODO n_neighbors=13 when testing wit
 #     ###############
 #     #### CV-10 ####
 #     ###############
+#     x = x_nodoc
 #     for feature in x.columns:
 #         if feature in sel_features:
 #             pass
 #         else:
 #             X = X.drop(feature, axis=1)
-
-#     sel = rndF.fit(X, y)
-#     n_yhat = sel.predict(X)
-#     print("Testing Accuracy: {a:5.2f}%".format(a = 100*metrics.accuracy_score(y, n_yhat)))
     
-#     # cross-validate result(s) 10fold
-#     cv_results = cross_validate(svm, X, y, cv=10)
-#     # sorted(cv_results.keys())
-#     print("Avg CV-10 Testing Accuracy: {a:5.2f}%".format(a = 100*sum(cv_results['test_score'])/len(cv_results['test_score'])))
-
+#     print("cv-10 accuracy: ", cross_val_score(sel_alg, X, y, scoring='accuracy', cv = 10).mean() * 100)
 
 #######################################
 #### Best Result So Far - w Doctor ####
 #######################################
-X = x
-
 doc_gen_knn = ['known CAD', 'previous AMI', 'previous CABG', 'Diabetes', 'Smoking',
               'Arterial Hypertension', 'Dislipidemia', 'Angiopathy',
               'Chronic Kindey Disease', 'ASYMPTOMATIC', 'ATYPICAL SYMPTOMS',
@@ -162,8 +197,6 @@ doc_sfs_rndF_fwd = ['known CAD', 'previous AMI', 'previous CABG', 'previous STRO
 #########################################
 #### Best Result So Far - w/o Doctor ####
 #########################################
-X2 = x_nodoc
-
 no_doc_gen_rdnF_60_none = ['known CAD', 'previous PCI', 'Diabetes', 'INCIDENT OF PRECORDIAL PAIN',
        'RST ECG', 'male', '40-50'] # 79,33 / 77,59 -> 76,62
 no_doc_gen_ada_30 = ['known CAD', 'Diabetes', 'Angiopathy', 'Family History of CAD',
@@ -178,12 +211,18 @@ no_doc_gen_dt = ['known CAD', 'previous PCI', 'Arterial Hypertension', 'Angiopat
 no_doc_gen_svm = ['known CAD', 'previous CABG', 'Diabetes', 'Smoking', 'ASYMPTOMATIC',
        'ANGINA LIKE', 'DYSPNOEA ON EXERTION', 'INCIDENT OF PRECORDIAL PAIN',
        'RST ECG', 'male', '40-50', '50-60', 'CNN_Healthy'] # svm 82,31% -> cv-10: 78,12% / manual: 75,7%
+no_doc_gen_tab = [] # %
+no_doc_gen_xgb = [] # %
+no_doc_gen_light = [] # %
+no_doc_gen_catb = ['known CAD', 'previous PCI', 'Diabetes', 'ANGINA LIKE', 'INCIDENT OF PRECORDIAL PAIN', 'male', '40', '60'] # 76,89%
+no_doc_catb  = ['known CAD', 'Diabetes', 'Smoking', 'Arterial Hypertension', 'Dislipidemia', 'Angiopathy', 'ANGINA LIKE', 'RST ECG', 'male', 'Overweight'] # 73,84%
+no_doc_catb2 = ['known CAD', 'Diabetes', 'Smoking', 'Arterial Hypertension', 'Dislipidemia', 'Angiopathy', 'ANGINA LIKE', 'RST ECG', 'male', 'Overweight']
 
 no_doc_SFS_svm = ['known CAD', 'Diabetes', 'INCIDENT OF PRECORDIAL PAIN', 'RST ECG', 'male', 'normal_weight', '40-50'] # 77,77% -> cv-10: 77,77% /  manual: 75,53%
 no_doc_SFS_svm_fwd = ['known CAD', 'previous PCI', 'Diabetes', 'INCIDENT OF PRECORDIAL PAIN', 'RST ECG', 'male', '40-50'] # 78,29% -> cv-10: 78,29% /  manual: 76,82%
 no_doc_SFS_dt = ['known CAD', 'Diabetes', 'Smoking', 'Chronic Kindey Disease', 'Family History of CAD', 'male', '40-50', '50-60'] # 76,72% -> cv-10: 76,01% /  manual: 75,41%
 no_doc_SFS_dt_fwd = ['known CAD', 'previous PCI', 'previous STROKE', 'Diabetes', 'Family History of CAD', 'DYSPNOEA ON EXERTION', 
-                    'INCIDENT OF PRECORDIAL PAIN', 'RST ECG', 'male', '<40', '40-50'] # 78,29% -> cv-10: 77,07% /  manual: 73,85%
+                    'INCIDENT OF PRECORDIAL PAIN', 'RST ECG', 'male', '<40', '40-50'] # 78,29% -> cv-10: 78,294% /  manual: 73,85%
 no_doc_SFS_knn = ['known CAD', 'previous CABG', 'previous STROKE', 'Diabetes', 'Smoking', 'Chronic Kindey Disease', 'ATYPICAL SYMPTOMS', 'male'] # knn (n=20) 76,54% -> cv-10: 76,54% /  manual: %
 no_doc_SFS_knn_fwd = ['known CAD', 'previous CABG', 'Diabetes', 'Angiopathy', 'Chronic Kindey Disease', 'ATYPICAL SYMPTOMS', 'INCIDENT OF PRECORDIAL PAIN', 'male', '40-50', '50-60', '>60'] # knn (n=20) 76,89% -> cv-10: 76,89% /  manual: %
 no_doc_sfs_ada = ['known CAD', 'previous CABG', 'Diabetes', 'Dislipidemia', 'Family History of CAD', 'ASYMPTOMATIC', 'ANGINA LIKE', 'DYSPNOEA ON EXERTION', 
@@ -191,6 +230,16 @@ no_doc_sfs_ada = ['known CAD', 'previous CABG', 'Diabetes', 'Dislipidemia', 'Fam
 no_doc_sfs_ada_fwd = ['known CAD', 'previous CABG', 'Diabetes', 'Angiopathy', 'Family History of CAD', 'ATYPICAL SYMPTOMS', 'male'] # 77,07% -> cv-10: 75,49% / manual: 76,30%
 no_doc_sfs_rndF = ['known CAD', 'Diabetes', 'DYSPNOEA ON EXERTION', 'male', 'Overweight', 'Obese'] # 75,84% -> cv-10: 74,09% / manual: 75,25%
 no_doc_sfs_rndF_fwd = ['known CAD', 'previous STROKE', 'Diabetes', 'Angiopathy', 'ATYPICAL SYMPTOMS', 'male'] #  76,37% -> cv-10: 76,54% / manual: 74,9%
+no_doc_sfs_tab = [] # 75,84% -> cv-10: 74,09% / manual: 75,25%
+no_doc_sfs_tab_fwd = [] #  76,37% -> cv-10: 76,54%
+no_doc_sfs_xgb = ['known CAD', 'previous AMI', 'previous PCI', 'Diabetes', 'Arterial Hypertension', 'Angiopathy', 'Chronic Kindey Disease', 'ATYPICAL SYMPTOMS', 'male'] # 76.9%
+no_doc_sfs_xgb_fwd = ['known CAD', 'previous PCI', 'Diabetes', 'INCIDENT OF PRECORDIAL PAIN', 'RST ECG', 'male', '40-50'] #  77,6%
+no_doc_sfs_light = ['previous AMI', 'previous PCI', 'previous CABG', 'Diabetes', 'Smoking', 'ASYMPTOMATIC', 'ANGINA LIKE', 'DYSPNOEA ON EXERTION', 'RST ECG', 'male', 'Obese', '40-50', '50-60', '60'] # 77.59%
+no_doc_sfs_light_fwd = ['known CAD', 'previous PCI', 'previous CABG', 'previous STROKE', 'Diabetes', 'Smoking', 'Angiopathy', 'Chronic Kindey Disease', 'ASYMPTOMATIC', 
+                        'ATYPICAL SYMPTOMS', 'INCIDENT OF PRECORDIAL PAIN', 'male', '40-50'] # 78,12%
+no_doc_sfs_catb = ['known CAD', 'previous AMI', 'previous PCI', 'Diabetes', 'Smoking', 'Dislipidemia', 'Angiopathy', 'Chronic Kindey Disease', 'Family History of CAD', 
+                   'ANGINA LIKE', 'DYSPNOEA ON EXERTION', 'INCIDENT OF PRECORDIAL PAIN', 'male', 'Obese', 'normal_weight', '40', '40-50', '50-60', '60'] # 76,34%
+no_doc_sfs_catb_fwd = ['known CAD', 'previous AMI', 'previous CABG', 'Diabetes', 'Chronic Kindey Disease', 'ATYPICAL SYMPTOMS', 'male'] # 75,49%
 #######################################
 doc_SFS_svm_plus = ['known CAD', 'previous PCI', 'previous CABG', 'Diabetes', 'Smoking','Arterial Hypertension', 'Dislipidemia', 
               'Chronic Kindey Disease', 'Family History of CAD', 'ASYMPTOMATIC', 'ATYPICAL SYMPTOMS', 
@@ -220,8 +269,7 @@ knn_no_doc_plus = ['known CAD', 'Diabetes', 'Smoking','Arterial Hypertension', '
 ada_no_doc_plus = ['known CAD', 'Diabetes', 'Smoking','Arterial Hypertension', 'Dislipidemia', 'Family History of CAD', 'Angiopathy',
        'ATYPICAL SYMPTOMS', 'male', '<40', '40-50', '50-60','>60'] # 76,53 -> cv-10: 75,83
 #######################################
-sel_features = doc_sfs_ada  
-sel_alg = ada
+sel_features = x_nodoc
 
 ##############
 ### CV-10 ####
@@ -234,18 +282,19 @@ for feature in x.columns:
 
 sel = sel_alg.fit(X, y)
 n_yhat = sel.predict(X)
-print("Testing Accuracy: {a:5.2f}%".format(a = 100*metrics.accuracy_score(y, n_yhat)))
 
-# cross-validate result(s) 10fold
-cv_results = cross_validate(sel_alg, X, y, cv=10)
-# sorted(cv_results.keys())
-print("Avg CV-10 Testing Accuracy: {a:5.2f}%".format(a = 100*sum(cv_results['test_score'])/len(cv_results['test_score'])))
-print("metrics:\n", metrics.classification_report(y, n_yhat, labels=None, target_names=None, sample_weight=None, digits=2, output_dict=True, zero_division='warn'))
-print("f1_score: ", metrics.f1_score(y, n_yhat, average='weighted'))
-print("jaccard_score: ", metrics.jaccard_score(y, n_yhat,pos_label=1))
+print("cv-10 accuracy: ", cross_val_score(sel_alg, X, y, scoring='accuracy', cv = 10).mean() * 100)
+print("f1_score: ", cross_val_score(sel_alg, X, y, scoring='f1', cv = 10).mean() * 100)
+print("jaccard_score: ", cross_val_score(sel_alg, X, y, scoring='jaccard', cv = 10).mean() * 100)
+scoring = {
+    'sensitivity': metrics.make_scorer(metrics.recall_score),
+    'specificity': metrics.make_scorer(metrics.recall_score,pos_label=0)
+}
+print("sensitivity: ", cross_val_score(sel_alg, X, y, scoring=scoring['sensitivity'], cv = 10).mean() * 100)
+print("specificity: ", cross_val_score(sel_alg, X, y, scoring=scoring['specificity'], cv = 10).mean() * 100)
+
 print("confusion matrix:\n", metrics.confusion_matrix(y, n_yhat, labels=[0,1]))
 print("TP/FP/TN/FN: ", perf_measure(y, n_yhat))
-
 
 # # By running the following loop we found out knn algorithm  gives best results for n=13
 # # best features: ['known CAD', 'previous AMI', 'previous CABG', 'Diabetes', 'Smoking', 'Arterial Hypertension', 
@@ -276,21 +325,66 @@ print("TP/FP/TN/FN: ", perf_measure(y, n_yhat))
 ###############################
 #### SFS Feature Selection ####
 ###############################
-# sfs1 = SFS(ada,
-#            k_features="best",
-#            forward=False,
-#            floating=False, 
-#            verbose=0,
-#            scoring='accuracy',
-#            cv=10,
-#            n_jobs=-1)
+X = x_nodoc
+sfs1 = SFS(sel_alg,
+           k_features="best",
+           forward=False,
+           floating=False, 
+           verbose=0,
+           scoring='accuracy',
+           cv=10,
+           n_jobs=-1)
 
-# sfs1 = sfs1.fit(x, y, custom_feature_names=x.columns)
-# # print("features: ", sfs1.subsets_)
-# print("SFS Accuracy Score: ", sfs1.k_score_)
-# # print("beast features: ", sfs1.k_feature_idx_)
-# print("SFS best features: ", sfs1.k_feature_names_)
-# print("end")
+sfs1 = sfs1.fit(x, y, custom_feature_names=x.columns)
+# print("features: ", sfs1.subsets_)
+print("SFS Accuracy Score: ", sfs1.k_score_)
+# print("beast features: ", sfs1.k_feature_idx_)
+print("SFS best features: ", sfs1.k_feature_names_)
+
+sel_features = sfs1.k_feature_names_
+
+###############
+#### CV-10 ####
+###############
+for feature in x.columns:
+    if feature in sel_features:
+        pass
+    else:
+        X = X.drop(feature, axis=1)
+
+# cross-validate result(s) 10fold
+print("cv-10 accuracy: ", cross_val_score(sel_alg, X, y, scoring='accuracy', cv = 10).mean() * 100)
+
+print("\n\n#### SFS Fwd ####")
+X = x_nodoc
+sfs1 = SFS(sel_alg,
+           k_features="best",
+           forward=True,
+           floating=False, 
+           verbose=0,
+           scoring='accuracy',
+           cv=10,
+           n_jobs=-1)
+
+sfs1 = sfs1.fit(x, y, custom_feature_names=x.columns)
+# print("features: ", sfs1.subsets_)
+print("SFS Accuracy Score: ", sfs1.k_score_)
+# print("beast features: ", sfs1.k_feature_idx_)
+print("SFS best features: ", sfs1.k_feature_names_)
+
+sel_features = sfs1.k_feature_names_
+
+###############
+#### CV-10 ####
+###############
+for feature in x.columns:
+    if feature in sel_features:
+        pass
+    else:
+        X = X.drop(feature, axis=1)
+
+# cross-validate result(s) 10fold
+print("cv-10 accuracy: ", cross_val_score(sel_alg, X, y, scoring='accuracy', cv = 10).mean() * 100)
 
 # function for getting all possible combinations of a list
 from itertools import chain, combinations
