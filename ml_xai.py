@@ -15,6 +15,7 @@ from sklearn import linear_model
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.ensemble import AdaBoostClassifier
+from catboost import CatBoostClassifier
 from mlxtend.feature_selection import SequentialFeatureSelector as SFS
 from genetic_selection import GeneticSelectionCV
 from sklearn.tree import DecisionTreeClassifier
@@ -147,6 +148,34 @@ def xai_svm(model, X, idx):
     shap_rank.sort_values(by="importance", ascending=False)
     print(shap_rank)
 
+# function to print SHAP values and plots for CatBoost
+def xai_cat(model, X):
+    explainer = shap.TreeExplainer(model)
+    shap_values = explainer.shap_values(X)
+    ###
+    idx_healthy = 2 # datapoint to explain (healthy)
+    idx_cad = 9 # datapoint to explain (CAD)
+    sv = explainer.shap_values(X.loc[[idx_healthy]])
+    exp = shap.Explanation(sv,explainer.expected_value, data=X.loc[[idx_healthy]].values, feature_names=X.columns)
+    shap.waterfall_plot(exp[0])
+    sv = explainer.shap_values(X.loc[[idx_cad]]) # CAD
+    exp = shap.Explanation(sv,explainer.expected_value, data=X.loc[[idx_cad]].values, feature_names=X.columns)
+    shap.waterfall_plot(exp[0])
+    ###
+    shap.summary_plot(shap_values, X)
+    # shap.summary_plot(shap_values, X, plot_type="bar")
+    shap.summary_plot(shap_values, X, plot_type='violin')
+    # for feature in X.columns:
+    #     print(feature)
+    #     shap.dependence_plot(feature, shap_values, X)
+    shap.force_plot(explainer.expected_value, shap_values[idx_healthy,:], X.iloc[idx_healthy,:], matplotlib=True)
+    shap.force_plot(explainer.expected_value, shap_values[idx_cad,:], X.iloc[idx_cad,:], matplotlib=True)
+
+    ###
+    shap_rank = shapley_feature_ranking(shap_values, X)
+    shap_rank.sort_values(by="importance", ascending=False)
+    print(shap_rank)
+
 data = pd.read_csv('/d/Σημειώσεις/PhD - EMERALD/1. CAD/src/cad_dset.csv')
 # print(data.columns)
 # print(data.values)
@@ -166,6 +195,7 @@ rndF = RandomForestClassifier(max_depth=None, random_state=0, n_estimators=80) #
 ada = AdaBoostClassifier(n_estimators=30, random_state=0) #TODO n_estimators=150 when testing with doctor, 30 w/o doctor
 knn = KNeighborsClassifier(n_neighbors=20) #TODO n_neighbors=13 when testing with doctor, 20 w/o doctor
 tab = TabPFNClassifier(device='cpu', N_ensemble_configurations=26)
+catb = CatBoostClassifier(n_estimators=79, learning_rate=0.1, verbose=False)
 
 
 
@@ -196,12 +226,14 @@ no_doc_dt = ['known CAD', 'previous PCI', 'previous STROKE', 'Diabetes', 'Family
 no_doc_knn = ['known CAD', 'previous CABG', 'Diabetes', 'Angiopathy', 'Chronic Kindey Disease', 'ATYPICAL SYMPTOMS', 'INCIDENT OF PRECORDIAL PAIN', 'male', '40-50', '50-60', '>60'] # knn (n=20) 76,89% -> cv-10: 76,89%
 no_doc_ada_30 = ['known CAD', 'Diabetes', 'Angiopathy', 'Family History of CAD', 'ATYPICAL SYMPTOMS', 'male', '40-50'] # 73,56 / 76,54
 no_doc_rdnF_60_none = ['known CAD', 'previous PCI', 'Diabetes', 'INCIDENT OF PRECORDIAL PAIN', 'RST ECG', 'male', '40-50'] # 79,33 / 77,59
+no_doc_catb = ['known CAD', 'previous PCI', 'previous CABG', 'previous STROKE', 'Diabetes', 'Smoking', 'Angiopathy', 'Chronic Kindey Disease', 
+               'ANGINA LIKE', 'INCIDENT OF PRECORDIAL PAIN', 'RST ECG', 'male', 'Obese', '40b50', '50b60'] # 78,82%
 #######################################
 
 x = x_nodoc #TODO ucommment when running w/o doctor
 X = x
-sel_features = no_doc_dt
-sel_alg = tab
+sel_features = no_doc_catb
+sel_alg = catb
 
 ##############
 ### CV-10 ####
@@ -251,11 +283,6 @@ plt.show()
 
 # xai(est, X, 0)
 # xai_svm(est, X, pd.core.indexes.range.RangeIndex(start=0, stop=2, step=1))
-xai_svm(est, X, X.index)
+# xai_svm(est, X, X.index)
 
-
-# summary plot
-# waterfall (1 Cad, 1 Healthy)
-# Dependence plot?
-# cohen plot
-# Μόνο χωρίς γιατρό
+xai_cat(est, X)
