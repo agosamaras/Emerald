@@ -9,6 +9,8 @@ from sklearn.neighbors import KNeighborsClassifier
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.ensemble import AdaBoostClassifier
 from sklearn.tree import DecisionTreeClassifier
+from catboost import CatBoostClassifier
+from lightgbm import LGBMClassifier
 from mlxtend.feature_selection import SequentialFeatureSelector as SFS
 from genetic_selection import GeneticSelectionCV
 from imblearn.over_sampling import SMOTE
@@ -41,6 +43,32 @@ def perf_measure(y_actual, y_hat):
            FN += 1
 
     return(TP, FP, TN, FN)
+
+def cohen_effect_size(X, y):
+    """Calculates the Cohen effect size of each feature.
+    
+        Parameters
+        ----------
+        X : {array-like, sparse matrix}, shape = [n_samples, n_features]
+            Training vector, where n_samples in the number of samples and
+            n_features is the number of features.
+        y : array-like, shape = [n_samples]
+            Target vector relative to X
+        Returns
+        -------
+        cohen_effect_size : array, shape = [n_features,]
+            The set of Cohen effect values.
+        Notes
+        -----
+        Based on https://github.com/AllenDowney/CompStats/blob/master/effect_size.ipynb
+    """
+    group1, group2 = X[y==0], X[y==1]
+    diff = group1.mean() - group2.mean()
+    var1, var2 = group1.var(), group2.var()
+    n1, n2 = group1.shape[0], group2.shape[0]
+    pooled_var = (n1 * var1 + n2 * var2) / (n1 + n2)
+    d = diff / np.sqrt(pooled_var)
+    return d
 
 # function to store predictions for each fold of Repeated Stratified KFold
 def val_predict(model, kfold : RepeatedStratifiedKFold, X : np.array, y : np.array) -> Tuple[np.array, np.array, np.array]:
@@ -108,6 +136,66 @@ def xai_svm(model, X, idx):
     # shap.force_plot(explainer.expected_value, shap_values[idx_s,:], X.iloc[idx_s,:], matplotlib=True)
     return shap_values
 
+# function to print SHAP values and plots for CatBoost
+def xai_cat(model, X):
+    explainer = shap.TreeExplainer(model)
+    shap_values = explainer.shap_values(X)
+    ###
+    idx_healthy = 2 # datapoint to explain (healthy)
+    idx_cad = 9 # datapoint to explain (CAD)
+    sv = explainer.shap_values(X.loc[[idx_healthy]])
+    exp = shap.Explanation(sv,explainer.expected_value, data=X.loc[[idx_healthy]].values, feature_names=X.columns)
+    shap.waterfall_plot(exp[0])
+    sv = explainer.shap_values(X.loc[[idx_cad]]) # CAD
+    exp = shap.Explanation(sv,explainer.expected_value, data=X.loc[[idx_cad]].values, feature_names=X.columns)
+    shap.waterfall_plot(exp[0])
+    ###
+    shap.summary_plot(shap_values, X)
+    # shap.summary_plot(shap_values, X, plot_type="bar")
+    # shap.summary_plot(shap_values, X, plot_type='violin')
+    # # for feature in X.columns:
+    # #     print(feature)
+    # #     shap.dependence_plot(feature, shap_values, X)
+    # shap.force_plot(explainer.expected_value, shap_values[idx_healthy,:], X.iloc[idx_healthy,:], matplotlib=True)
+    # shap.force_plot(explainer.expected_value, shap_values[idx_cad,:], X.iloc[idx_cad,:], matplotlib=True)
+
+# function to print SHAP values and plots for lightGBM
+def xai_light(model, X):
+    # ref: https://www.kaggle.com/code/kaanboke/catboost-lightgbm-xgboost-explained-by-shap/notebook
+    explainer = shap.TreeExplainer(model)
+    shap_values = explainer.shap_values(X)
+    ###
+    idx_s = 0 # datapoint to explain (healthy)
+    idx_mg = 1 # datapoint to explain (CAD)
+    sv = explainer(X)
+    exp = shap.Explanation(sv.values[:,:,0], sv.base_values[:,1], data=X.values, feature_names=X.columns)
+    shap.waterfall_plot(exp[idx_s])
+    shap.waterfall_plot(exp[idx_mg])
+    ###    
+    fig = plt.subplots(figsize=(6,6),dpi=200)
+    ax = shap.summary_plot(shap_values[1], X,plot_type="dot")
+    plt.show()
+    fig = plt.subplots(figsize=(6,6),dpi=200)
+    ax_2= shap.decision_plot(explainer.expected_value[1], shap_values[1][1], X.iloc[[1]],link= "logit")
+    plt.show()
+
+# def print_metrics(sel_alg, X, y):
+#     print("cv-10 accuracy: ", cross_val_score(sel_alg, X, y, scoring='accuracy', cv = 10).mean() * 100)
+#     print("cv-10 accuracy STD: ", cross_val_score(sel_alg, X, y, scoring='accuracy', cv = 10).std() * 100)
+#     print("f1_score: ", cross_val_score(sel_alg, X, y, scoring='f1', cv = 10).mean() * 100)
+#     print("f1_score STD: ", cross_val_score(sel_alg, X, y, scoring='f1', cv = 10).std() * 100)
+#     print("jaccard_score: ", cross_val_score(sel_alg, X, y, scoring='jaccard', cv = 10).mean() * 100)
+#     print("jaccard_score STD: ", cross_val_score(sel_alg, X, y, scoring='jaccard', cv = 10).std() * 100)
+#     scoring = {
+#         'sensitivity': metrics.make_scorer(metrics.recall_score),
+#         'specificity': metrics.make_scorer(metrics.recall_score,pos_label=0)
+#     }
+#     print("sensitivity: ", cross_val_score(sel_alg, X, y, scoring=scoring['sensitivity'], cv = 10).mean() * 100)
+#     print("sensitivity STD: ", cross_val_score(sel_alg, X, y, scoring=scoring['sensitivity'], cv = 10).std() * 100)
+#     print("specificity: ", cross_val_score(sel_alg, X, y, scoring=scoring['specificity'], cv = 10).mean() * 100)
+#     print("specificity STD: ", cross_val_score(sel_alg, X, y, scoring=scoring['specificity'], cv = 10).std() * 100)
+
+
 # function for random oversampling predict
 def rndm_osmpl(model, kfold, X, y) -> Tuple[np.array, np.array, np.array]:
     # initialization
@@ -128,7 +216,14 @@ def rndm_osmpl(model, kfold, X, y) -> Tuple[np.array, np.array, np.array]:
         n_yhat = est.predict(X_test)
 
         # xai(est, X_train, 0)
-        xai_svm(est, X, train_index)
+        # xai_svm(est, X, train_index)
+        # xai_cat(est, X)
+        # xai_light(est, X)
+
+        # effect_sizes = cohen_effect_size(X.loc[train_index], y.loc[train_index])
+        # effect_sizes.reindex(effect_sizes.abs().sort_values(ascending=False).nlargest(40).index)[::-1].plot.barh(figsize=(6, 10))
+        # plt.title('Features with the largest effect sizes')
+        # plt.show()
 
         tpa, fpa, tna, fna = perf_measure(y_test, n_yhat)
         tp = tp + tpa
@@ -168,7 +263,7 @@ def plot_2D_confusion_matrix_by_values(tp, fp, tn, fn, sorted_labels : list):
     plt.xlabel('Predicted'); plt.ylabel('Actual'); plt.title('Confusion Matrix')
     plt.show()
 
-data_path = '/d/Σημειώσεις/PhD - EMERALD/3. Extras/Parathyroid/input_data.csv'
+data_path = '/d/Σημειώσεις/PhD - EMERALD/3. Extras/Parathyroid/input_data.extra.csv'
 # data_path = '/mnt/c/Users/samar/Documents/PhD - EMERALD/Extras/Parathyroid/input_data.csv'
 data = pd.read_csv(data_path)
 # print(data.columns)
@@ -191,6 +286,8 @@ ada = AdaBoostClassifier(n_estimators=150, random_state=0) # Avg CV-10 Testing A
 # metrics: {'0': {'precision': 0.9310344827586207, 'recall': 0.8526315789473684, 'f1-score': 0.8901098901098902, 'support': 95}, '1': {'precision': 0.5625, 'recall': 0.75, 'f1-score': 0.6428571428571429, 'support': 24}, 'accuracy': 0.8319327731092437, 'macro avg': {'precision': 0.7467672413793103, 'recall': 0.8013157894736842, 'f1-score': 0.7664835164835165, 'support': 119}, 'weighted avg': {'precision': 0.8567082005215879, 'recall': 0.8319327731092437, 'f1-score': 0.8402437898236218, 'support': 119}}
 knn = KNeighborsClassifier(n_neighbors=3) # Avg CV-10 Testing Accuracy: 79.92% / '0recall': 0.9578947368421052 / '1recall':  0.5833333333333334
 # metrics: {'0': {'precision': 0.8787878787878788, 'recall': 0.9157894736842105, 'f1-score': 0.8969072164948454, 'support': 95}, '1': {'precision': 0.6, 'recall': 0.5, 'f1-score': 0.5454545454545454, 'support': 24}, 'accuracy': 0.8319327731092437, 'macro avg': {'precision': 0.7393939393939394, 'recall': 0.7078947368421052, 'f1-score': 0.7211808809746953, 'support': 119}, 'weighted avg': {'precision': 0.8225617519735166, 'recall': 0.8319327731092437, 'f1-score': 0.8260260055287345, 'support': 119}}
+catb = CatBoostClassifier(n_estimators=6, learning_rate=0.1, verbose=False)
+light = LGBMClassifier(objective='binary', random_state=5, n_estimators=29, n_jobs=-1) # 93/5
 
 #############################################
 #### Genetic Algorithm Feature Selection ####
@@ -243,7 +340,7 @@ knn = KNeighborsClassifier(n_neighbors=3) # Avg CV-10 Testing Accuracy: 79.92% /
 
 ############################
 X = x
-sel_alg = knn
+sel_alg = ada
 
 ################################
 ### Drop unnecessary fields ####
@@ -257,6 +354,10 @@ sel_alg = knn
 sel_fit = sel_alg.fit(X, y)
 n_yhat = cross_val_predict(sel_alg, X, y)
 print("Testing Accuracy: {a:5.2f}%".format(a = 100*metrics.accuracy_score(y, n_yhat)))
+
+# metrics w/o oversampling
+# report = metrics.classification_report(y, n_yhat, labels=None, target_names=None, sample_weight=None, digits=2, output_dict=True, zero_division='warn')
+# print("metrics:\n", report)
 
 # #############
 # ### CV-10 ###
@@ -279,6 +380,15 @@ print("Testing Accuracy: {a:5.2f}%".format(a = 100*metrics.accuracy_score(y, n_y
 ### RANDOM ###
 ##############
 cv = StratifiedKFold(n_splits=10, random_state=0, shuffle=True)
+
+# infinite run:
+# try:
+#     while True:
+#         rndm_osmpl(sel_alg, cv, X, y)
+# except KeyboardInterrupt:
+#     print("Oh! you pressed CTRL + C.")
+#     print("Program interrupted.")
+# single run:
 rndm_osmpl(sel_alg, cv, X, y)
 
 # # Loop to find the optimal ML model

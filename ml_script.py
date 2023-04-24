@@ -253,7 +253,7 @@ knn_no_doc_plus = ['known CAD', 'Diabetes', 'Smoking','Arterial Hypertension', '
 ada_no_doc_plus = ['known CAD', 'Diabetes', 'Smoking','Arterial Hypertension', 'Dislipidemia', 'Family History of CAD', 'Angiopathy',
        'ATYPICAL SYMPTOMS', 'male', 'u40', '40b50', '50b60','o60'] # 76,53 -> cv-10: 75,83
 #######################################
-sel_features = no_doc_sfs_catb
+sel_features = x_nodoc
 
 ##############
 ### CV-10 ####
@@ -264,18 +264,23 @@ for feature in x.columns:
     else:
         X = X.drop(feature, axis=1)
 
-sel = sel_alg.fit(X, y)
-n_yhat = sel.predict(X)
+est = sel_alg.fit(X, y)
+n_yhat = est.predict(X)
 
 print("cv-10 accuracy: ", cross_val_score(sel_alg, X, y, scoring='accuracy', cv = 10).mean() * 100)
+print("cv-10 accuracy STD: ", cross_val_score(sel_alg, X, y, scoring='accuracy', cv = 10).std() * 100)
 print("f1_score: ", cross_val_score(sel_alg, X, y, scoring='f1', cv = 10).mean() * 100)
+print("f1_score STD: ", cross_val_score(sel_alg, X, y, scoring='f1', cv = 10).std() * 100)
 print("jaccard_score: ", cross_val_score(sel_alg, X, y, scoring='jaccard', cv = 10).mean() * 100)
+print("jaccard_score STD: ", cross_val_score(sel_alg, X, y, scoring='jaccard', cv = 10).std() * 100)
 scoring = {
     'sensitivity': metrics.make_scorer(metrics.recall_score),
     'specificity': metrics.make_scorer(metrics.recall_score,pos_label=0)
 }
 print("sensitivity: ", cross_val_score(sel_alg, X, y, scoring=scoring['sensitivity'], cv = 10).mean() * 100)
+print("sensitivity STD: ", cross_val_score(sel_alg, X, y, scoring=scoring['sensitivity'], cv = 10).std() * 100)
 print("specificity: ", cross_val_score(sel_alg, X, y, scoring=scoring['specificity'], cv = 10).mean() * 100)
+print("specificity STD: ", cross_val_score(sel_alg, X, y, scoring=scoring['specificity'], cv = 10).std() * 100)
 
 print("confusion matrix:\n", metrics.confusion_matrix(y, n_yhat, labels=[0,1]))
 print("TP/FP/TN/FN: ", perf_measure(y, n_yhat))
