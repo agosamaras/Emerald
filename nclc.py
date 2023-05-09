@@ -1,20 +1,12 @@
-from array import array
-from enum import auto
-from re import sub
-from turtle import backward
-import numpy as np
 import matplotlib.pyplot as plt
 import pandas as pd
 import numpy as np
 from sklearn import preprocessing
 from sklearn import metrics
-from sklearn.model_selection import train_test_split
 from sklearn.model_selection import cross_val_predict
-from sklearn.model_selection import cross_validate
 from sklearn.model_selection import cross_val_score
 from sklearn import metrics
 from sklearn import svm
-from sklearn import linear_model
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.ensemble import AdaBoostClassifier
@@ -23,14 +15,10 @@ from catboost import CatBoostClassifier
 from tabpfn import TabPFNClassifier
 import xgboost
 from sklearn import tree
-from mlxtend.feature_selection import SequentialFeatureSelector as SFS
-import itertools
-import sys
-import multiprocessing
-from tqdm import tqdm #tqmd progress bar
-
-from genetic_selection import GeneticSelectionCV
+import shap
 from sklearn.tree import DecisionTreeClassifier
+import sys
+import seaborn as sns
 
 # function for printing each component of confusion matrix
 def perf_measure(y_actual, y_hat):
@@ -51,7 +39,33 @@ def perf_measure(y_actual, y_hat):
 
     return(TP, FP, TN, FN)
 
-data_path = '/d/Σημειώσεις/PhD - EMERALD/2. NCLC/Input Data/stats.csv'
+# function to print SHAP values and plots for tree based algorithms
+def xai(model, X, idx):
+    explainer = shap.KernelExplainer(model.predict, X.values[idx])
+    shap_values = explainer.shap_values(X)
+    print(shap_values.shape)
+    # shap.summary_plot(shap_values, X)
+    # shap.summary_plot(shap_values, X, plot_type='violin')
+    # for feature in X.columns:
+    #     print(feature)
+    #     shap.dependence_plot(feature, shap_values, X)
+    # idx_ben = 4 # datapoint to explain (benign)
+    # idx_mal = 1 # datapoint to explain (malignant)
+    # sv = explainer.shap_values(X.loc[[idx_ben]])
+    # exp = shap.Explanation(sv,explainer.expected_value, data=X.loc[[idx_ben]].values, feature_names=X.columns)
+    # shap.waterfall_plot(exp[0])
+    # sv = explainer.shap_values(X.loc[[idx_mal]])
+    # exp = shap.Explanation(sv,explainer.expected_value, data=X.loc[[idx_mal]].values, feature_names=X.columns)
+    # shap.waterfall_plot(exp[0])
+    # shap.force_plot(explainer.expected_value, shap_values[idx_ben,:], X.iloc[idx_ben,:], matplotlib=True)
+    # shap.force_plot(explainer.expected_value, shap_values[idx_mal,:], X.iloc[idx_mal,:], matplotlib=True)
+    ###
+    # shap.decision_plot(0, shap_values, X.loc[idx])
+    # shap.decision_plot(0, shap_values[idx_ben], X.loc[idx[idx_ben]], highlight=0)
+    # shap.decision_plot(0, shap_values[idx_mal], X.loc[idx[idx_mal]], highlight=0)
+    return shap_values
+
+data_path = '/d/Σημειώσεις/PhD - EMERALD/2. NSCLC/Input Data/stats.csv'
 data = pd.read_csv(data_path, na_filter = False)
 # print(data.columns)
 # print(data.values)
@@ -64,19 +78,18 @@ y = dataframe['BENIGN']
 # print("y:\n",y)
 
 # ml algorithms initialization
-svmc = svm.SVC(kernel='rbf') # 79.1%, STD 11.24
-lr = linear_model.LinearRegression()
-dt = DecisionTreeClassifier() # 91.4%, STD 5.634
-rndF = RandomForestClassifier(max_depth=None, random_state=0, n_estimators=32) # 93.9%, STD 6.102
-ada = AdaBoostClassifier(n_estimators=1, random_state=0) # 93.9%, STD 6.102
-knn = KNeighborsClassifier(n_neighbors=7) # 76.32%, STD 16.776
-tab = TabPFNClassifier(device='cpu', N_ensemble_configurations=23) # 92.65%, STD 8.053
-xgb = xgboost.XGBRegressor(objective="binary:hinge", random_state=42) # 81.5%, STD 12.742
-light = LGBMClassifier(objective='binary', random_state=5, n_estimators=15, n_jobs=-1) # 93.07%, STD 5.773
-catb = CatBoostClassifier(n_estimators=5, learning_rate=0.1, verbose=False) # 93.9%, STD 6.102
+svmc = svm.SVC(kernel='rbf') # 77.87%, STD 11.373
+dt = DecisionTreeClassifier() # 91.47%, STD 7.523
+rndF = RandomForestClassifier(max_depth=None, random_state=0, n_estimators=36) # 93.1%, STD 6.231 [*]
+ada = AdaBoostClassifier(n_estimators=30, random_state=0) # 94.33%, STD 6.3 [*]
+knn = KNeighborsClassifier(n_neighbors=7) # 73.27%, STD 7.177
+tab = TabPFNClassifier(device='cpu', N_ensemble_configurations=8) # 91.87%, STD 7.414 [*]
+xgb = xgboost.XGBRegressor(objective="binary:hinge", random_state=42) # 88.93%, STD 5.446
+light = LGBMClassifier(objective='binary', random_state=5, n_estimators=25, n_jobs=-1) # 92,27 6,365 [*]
+catb = CatBoostClassifier(n_estimators=79, learning_rate=0.1, verbose=False) # 92.25%, STD 6.42
 
-sel_alg = catb
-X = x 
+sel_alg = light
+X = x
 
 # selected_features = catb.select_features(
 #                 X,
@@ -147,31 +160,30 @@ X = x
 #     else:
 #         X = X.drop(feature, axis=1)
 
-######################################
-### Hyperparameter Selection Loop ####
-######################################
-best_acc = 0
-best_std = 100
-for i in range(1,100):
-   sel = CatBoostClassifier(n_estimators=i, learning_rate=0.1, verbose=False)
-   print(i)
-   model = cross_val_score(sel, X, y, scoring='accuracy', cv = 10)
-   acc = model.mean() * 100
-   std = model.std() * 100
-   if (acc > best_acc) or (acc == best_acc and std < best_std):
-      best_acc = acc
-      best_std = std
-      print("cv-10 accuracy: ", acc)
-      print("cv-10 accuracy STD: ", std)
+# ######################################
+# ### Hyperparameter Selection Loop ####
+# ######################################
+# best_acc = 0 # 91.36 # SUV classification
+# best_std = 100
+# for i in range(1,100):
+#    sel = TabPFNClassifier(device='cpu', N_ensemble_configurations=i)
+#    print(i)
+#    model = cross_val_score(sel, X, y, scoring='accuracy', cv = 10)
+#    acc = model.mean() * 100
+#    std = model.std() * 100
+#    if (acc > best_acc) or (acc == best_acc and std < best_std):
+#       best_acc = acc
+#       best_std = std
+#       print("cv-10 accuracy: ", acc)
+#       print("cv-10 accuracy STD: ", std)
 
-sys.exit()
+# sys.exit()
 
+# est = sel_alg.fit(X, y)
+# n_yhat = cross_val_predict(sel_alg, X, y, cv=10)
 
-est = sel_alg.fit(X, y)
-n_yhat = est.predict(X)
-
-print("cv-10 accuracy: ", cross_val_score(sel_alg, X, y, scoring='accuracy', cv = 10).mean() * 100)
-print("cv-10 accuracy STD: ", cross_val_score(sel_alg, X, y, scoring='accuracy', cv = 10).std() * 100)
+# print("cv-10 accuracy: ", cross_val_score(sel_alg, X, y, scoring='accuracy', cv = 10).mean() * 100)
+# print("cv-10 accuracy STD: ", cross_val_score(sel_alg, X, y, scoring='accuracy', cv = 10).std() * 100)
 # print("f1_score: ", cross_val_score(sel_alg, X, y, scoring='f1', cv = 10).mean() * 100)
 # print("f1_score STD: ", cross_val_score(sel_alg, X, y, scoring='f1', cv = 10).std() * 100)
 # print("jaccard_score: ", cross_val_score(sel_alg, X, y, scoring='jaccard', cv = 10).mean() * 100)
@@ -185,9 +197,81 @@ print("cv-10 accuracy STD: ", cross_val_score(sel_alg, X, y, scoring='accuracy',
 # print("specificity: ", cross_val_score(sel_alg, X, y, scoring=scoring['specificity'], cv = 10).mean() * 100)
 # print("specificity STD: ", cross_val_score(sel_alg, X, y, scoring=scoring['specificity'], cv = 10).std() * 100)
 
-print("confusion matrix:\n", metrics.confusion_matrix(y, n_yhat, labels=[0,1]))
-print("TP/FP/TN/FN: ", perf_measure(y, n_yhat))
+# print("confusion matrix:\n", metrics.confusion_matrix(y, n_yhat, labels=[0,1]))
+# print("TP/FP/TN/FN: ", perf_measure(y, n_yhat))
 
+# # Multiple ROCs
+# # fit AdaBoost model and plot ROC curve
+# n_yhat = cross_val_predict(ada, X, y, cv=10)
+# fpr, tpr, _ = metrics.roc_curve(y, n_yhat)
+# auc = round(metrics.roc_auc_score(y, n_yhat), 4)
+# plt.plot(fpr,tpr,label="AdaBoost, AUC="+str(auc))
+
+# # fit Random Forest model and plot ROC curve
+# n_yhat = cross_val_predict(rndF, X, y, cv=10)
+# fpr, tpr, _ = metrics.roc_curve(y, n_yhat)
+# auc = round(metrics.roc_auc_score(y, n_yhat), 4)
+# plt.plot(fpr,tpr,label="Random Forest, AUC="+str(auc))
+
+# # fit LightGBM model and plot ROC curve
+# n_yhat = cross_val_predict(light, X, y, cv=10)
+# fpr, tpr, _ = metrics.roc_curve(y, n_yhat)
+# auc = round(metrics.roc_auc_score(y, n_yhat), 4)
+# plt.plot(fpr,tpr,label="LightGBM, AUC="+str(auc))
+
+# # fit TabPFN model and plot ROC curve
+# n_yhat = cross_val_predict(tab, X, y, cv=10)
+# fpr, tpr, _ = metrics.roc_curve(y, n_yhat)
+# auc = round(metrics.roc_auc_score(y, n_yhat), 4)
+# plt.plot(fpr,tpr,label="TabPFN, AUC="+str(auc))
+
+# # add plot config
+# plt.title('Comparison of Models (ROC curves)')
+# plt.legend()
+# plt.ylabel('True Positive Rate')
+# plt.xlabel('False Positive Rate')
+# plt.show()
+
+# Multiple CMs
+# fig, axes = plt.subplots(1, 4, figsize=(20, 5))
+fig, axes = plt.subplots(nrows=2, ncols=2, figsize=(15,10))
+sns.set(font_scale=2.0)
+# fit AdaBoost model and plot CM
+n_yhat = cross_val_predict(ada, X, y, cv=10)
+disp = metrics.ConfusionMatrixDisplay.from_predictions(y, n_yhat, display_labels=['Benign', 'Malignant'])
+disp.plot(ax=axes[0][0], xticks_rotation=45, cmap='Blues')
+disp.ax_.set_title('AdaBoost')
+disp.im_.colorbar.remove()
+
+# fit Random Forest model and plot CM
+n_yhat = cross_val_predict(rndF, X, y, cv=10)
+disp = metrics.ConfusionMatrixDisplay.from_predictions(y, n_yhat, display_labels=['Benign', 'Malignant'])
+disp.plot(ax=axes[0][1], xticks_rotation=45, cmap='Blues')
+disp.ax_.set_title('Random Forest')
+disp.im_.colorbar.remove()
+
+# fit LightGBM model and plot CM
+n_yhat = cross_val_predict(light, X, y, cv=10)
+disp = metrics.ConfusionMatrixDisplay.from_predictions(y, n_yhat, display_labels=['Benign', 'Malignant'])
+disp.plot(ax=axes[1][0], xticks_rotation=45, cmap='Blues')
+disp.ax_.set_title('LightGBM')
+disp.im_.colorbar.remove()
+
+# fit TabPFN model and plot CM
+n_yhat = cross_val_predict(tab, X, y, cv=10)
+disp = metrics.ConfusionMatrixDisplay.from_predictions(y, n_yhat, display_labels=['Benign', 'Malignant'])
+disp.plot(ax=axes[1][1], xticks_rotation=45, cmap='Blues')
+disp.ax_.set_title('TabPFN')
+disp.im_.colorbar.remove()
+
+fig.subplots_adjust(wspace=0.10, hspace=0.45)
+fig.colorbar(disp.im_, ax=axes)
+fig.suptitle('Comparison of Models (Confusion Matrices)')
+plt.show()
+
+# xai(est, X, X.index)
+
+#######
 # # By running the following loop we found out knn algorithm  gives best results for n=13
 # # best features: ['known CAD', 'previous AMI', 'previous CABG', 'Diabetes', 'Smoking', 'Arterial Hypertension', 
 # # 'Dislipidemia', 'Angiopathy', 'ASYMPTOMATIC', 'ATYPICAL SYMPTOMS', 'ANGINA LIKE', 'male', 'Overweight', '40b50', 
