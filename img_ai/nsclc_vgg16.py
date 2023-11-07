@@ -29,13 +29,14 @@ ct = f"F:/nsclc/Test3.v1/ct"
 pet = f"F:/nsclc/Test3.v1/pet"
 
 # Load custom dataset (replace 'data_dir' with your dataset directory)
-data_dir = ct
+data_dir = pet
 image_datasets = {x: datasets.ImageFolder(root=f'{data_dir}/{x}', transform=data_transforms[x])
                   for x in ['train', 'test']}
 dataloaders = {x: DataLoader(image_datasets[x], batch_size=32, shuffle=True, num_workers=4)
                for x in ['train', 'test']}
 
 # Use a pre-trained VGG16 model and modify the final fully connected layer for the number of classes in your dataset
+# weights=vgg16.VGG16_Weights.DEFAULT
 model = models.vgg16(pretrained=True)
 num_classes = len(image_datasets['train'].classes)
 model.classifier[6] = nn.Linear(model.classifier[6].in_features, num_classes)  # Modify the last FC layer
