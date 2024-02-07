@@ -25,6 +25,8 @@ import copy as cp
 import seaborn as sns
 import shap
 
+from scipy.stats import ttest_rel
+
 # function for printing each component of confusion matrix
 def perf_measure(y_actual, y_hat):
     TP = 0
@@ -215,6 +217,10 @@ def rndm_osmpl(model, kfold, X, y) -> Tuple[np.array, np.array, np.array]:
         est = model_.fit(X_over, y_over)
         n_yhat = est.predict(X_test)
 
+        # Calculate accuracy for the current fold
+        accuracy = metrics.accuracy_score(y_test, n_yhat)
+        print(f'Accuracy for current fold: {accuracy}')
+
         # xai(est, X_train, 0)
         # xai_svm(est, X, train_index)
         # xai_cat(est, X)
@@ -235,9 +241,9 @@ def rndm_osmpl(model, kfold, X, y) -> Tuple[np.array, np.array, np.array]:
 
     # print("TP/FP/TN/FN: ", tp, fp, tn, fn)
     # print("confusion matrix:\n", metrics.confusion_matrix(y_actual, y_pred, labels=[0,1]))
-    plot_confusion_matrix(y_actual, y_pred, [0, 1])
+    # plot_confusion_matrix(y_actual, y_pred, [0, 1])
     report = metrics.classification_report(y_actual, y_pred, labels=None, target_names=None, sample_weight=None, digits=2, output_dict=True, zero_division='warn')
-    print("metrics:\n", report)
+    # print("metrics:\n", report)
     roc = metrics.roc_auc_score(y_actual, y_pred)
     # print("roc:\n", roc)
     # fpr, tpr, _ = metrics.roc_curve(y_actual, y_pred)
@@ -340,7 +346,7 @@ light = LGBMClassifier(objective='binary', random_state=5, n_estimators=29, n_jo
 
 ############################
 X = x
-sel_alg = ada
+sel_alg = light
 
 ################################
 ### Drop unnecessary fields ####
@@ -353,6 +359,7 @@ sel_alg = ada
 
 sel_fit = sel_alg.fit(X, y)
 n_yhat = cross_val_predict(sel_alg, X, y)
+# print(f"n_yhat: {n_yhat}")
 print("Testing Accuracy: {a:5.2f}%".format(a = 100*metrics.accuracy_score(y, n_yhat)))
 
 # metrics w/o oversampling
@@ -379,7 +386,14 @@ print("Testing Accuracy: {a:5.2f}%".format(a = 100*metrics.accuracy_score(y, n_y
 ##############
 ### RANDOM ###
 ##############
-cv = StratifiedKFold(n_splits=10, random_state=0, shuffle=True)
+cv10 = StratifiedKFold(n_splits=10, random_state=0, shuffle=True)
+
+# from sklearn.model_selection import cross_val_score
+# # Perform cross-validation
+# scores = cross_val_score(sel_alg, X, y, cv=cv10)  # cv=5 for 5-fold cross-validation
+# # Print accuracy for each fold
+# for i, score in enumerate(scores, 1):
+#     print(f"Accuracy for fold {i}: {score}")
 
 # infinite run:
 # try:
@@ -389,7 +403,7 @@ cv = StratifiedKFold(n_splits=10, random_state=0, shuffle=True)
 #     print("Oh! you pressed CTRL + C.")
 #     print("Program interrupted.")
 # single run:
-rndm_osmpl(sel_alg, cv, X, y)
+rndm_osmpl(sel_alg, cv10, X, y)
 
 # # Loop to find the optimal ML model
 # models = [svmn, dt, knn, rndF, ada]
