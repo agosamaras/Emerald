@@ -1,7 +1,6 @@
 from array import array
 from enum import auto
 from re import sub
-from turtle import backward
 import matplotlib.pyplot as plt
 import pandas as pd
 import numpy as np
