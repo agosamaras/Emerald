@@ -10,6 +10,7 @@ import numpy as np
 from PIL import Image, ImageDraw
 import torchvision.transforms as transforms
 from ultralytics import YOLO
+import time
 
 # App vars and functions
 cad_features_dict = {
@@ -43,18 +44,42 @@ cad_features_dict = {
     "Doctor: Healthy": "Does the doctor yield the patient as healthy? (This is a feature of outmost importance, as the expert's yield has been found to be extrmely important)",
 }
 
+cad_default_values = {
+    "known CAD" : 0,
+    "previous AMI": 0,
+    "previous PCI": 0,
+    "previous CABG": 0,
+    "previous STROKE": 0,
+    "Diabetes": 0,
+    "Smoking": 0,
+    "Arterial Hypertension": 0,
+    "Dislipidemia": 0,
+    "Angiopathy": 0,
+    "Chronic Kindey Disease": 0,
+    "Family History of CAD": 0,
+    "ASYMPTOMATIC": 1,
+    "ATYPICAL SYMPTOMS": 0,
+    "ANGINA LIKE": 0,
+    "DYSPNOEA ON EXERTION": 0,
+    "INCIDENT OF PRECORDIAL PAIN": 0,
+    "RST ECG": 0,
+    "CNN_Healthy": 0,
+    "Doctor: Healthy": None,
+}
+
 nsclc_features_dict = {
-    "Fdg": "What is the Fdg measurement of the patient?",
     "Age": "What is the age of the patient?",
     "BMI": "What is the Body Mass Index of the patient?",
     "GLU": "What is the GLU measurement of the patient?",
-    "SUV": "What is the SUV measurement of the patient?",
+    "SUV": "What is the SUVmax measurement of the patient?",
     "Diameter": "What is the diameter of the SPN?",
     "Location": "What is the location of the SPN?",
     "Type": "What is the type of the SPN?",
     "Limits": "How would you define the limits of the SPN?",
     "Gender": "Is the patient male?"
 }
+
+nsclc_mandatory_features = ["SUV", "Diameter"]
 
 weight_cats = ["Overweight","Obese","normal_weight"]
 age_cats = ["u40","40b50","50b60","o60"]
@@ -187,6 +212,100 @@ def yolo_results(image, mode="PET", mask_size=60):
         st.image(overlayed_image, caption="Ablation Heat-map", width=200)
     return
 
+### Anna's models
+import cv2
+import tensorflow as tf
+from tensorflow.keras.models import Model
+class GradCAM:
+    def __init__(self, model, classIdx, layerName=None):
+        # store the model, the class index used to measure the class
+        # activation map, and the layer to be used when visualizing
+        # the class activation map
+        self.model = model
+        self.classIdx = classIdx
+        self.layerName = layerName
+        # if the layer name is None, attempt to automatically find
+        # the target output layer
+        if self.layerName is None:
+            self.layerName = self.find_target_layer()
+
+    def find_target_layer(self):
+        # attempt to find the final convolutional layer in the network
+        # by looping over the layers of the network in reverse order
+        for layer in reversed(self.model.layers):
+            # check to see if the layer has a 4D output
+            if len(layer.output_shape) == 4:
+                return layer.name
+        # otherwise, we could not find a 4D layer so the GradCAM
+        # algorithm cannot be applied
+        raise ValueError("Could not find 4D layer. Cannot apply GradCAM.")
+
+
+    def compute_heatmap(self, image, eps=1e-8):
+        # construct our gradient model by supplying (1) the inputs
+        # to our pre-trained model, (2) the output of the (presumably)
+        # final 4D layer in the network, and (3) the output of the
+        # softmax activations from the model
+        gradModel = Model(
+            inputs=[self.model.inputs],
+            outputs=[self.model.get_layer(self.layerName).output, self.model.output])
+
+        # record operations for automatic differentiation
+        with tf.GradientTape() as tape:
+            # cast the image tensor to a float-32 data type, pass the
+            # image through the gradient model, and grab the loss
+            # associated with the specific class index
+            inputs = tf.cast(image, tf.float32)
+            (convOutputs, predictions) = gradModel(inputs)
+            
+            loss = predictions[:, tf.argmax(predictions[0])]
+    
+        # use automatic differentiation to compute the gradients
+        grads = tape.gradient(loss, convOutputs)
+
+        # compute the guided gradients
+        castConvOutputs = tf.cast(convOutputs > 0, "float32")
+        castGrads = tf.cast(grads > 0, "float32")
+        guidedGrads = castConvOutputs * castGrads * grads
+        # the convolution and guided gradients have a batch dimension
+        # (which we don't need) so let's grab the volume itself and
+        # discard the batch
+        convOutputs = convOutputs[0]
+        guidedGrads = guidedGrads[0]
+
+        # compute the average of the gradient values, and using them
+        # as weights, compute the ponderation of the filters with
+        # respect to the weights
+        weights = tf.reduce_mean(guidedGrads, axis=(0, 1))
+        cam = tf.reduce_sum(tf.multiply(weights, convOutputs), axis=-1)
+
+        # grab the spatial dimensions of the input image and resize
+        # the output class activation map to match the input image
+        # dimensions
+        (w, h) = (image.shape[2], image.shape[1])
+        heatmap = cv2.resize(cam.numpy(), (w, h))
+        # normalize the heatmap such that all values lie in the range
+        # [0, 1], scale the resulting values to the range [0, 255],
+        # and then convert to an unsigned 8-bit integer
+        numer = heatmap - np.min(heatmap)
+        denom = (heatmap.max() - heatmap.min()) + eps
+        heatmap = numer / denom
+        heatmap = (heatmap * 255).astype("uint8")
+        # return the resulting heatmap to the calling function
+        return heatmap
+
+    def overlay_heatmap(self, heatmap, image, alpha=0.5,
+                        colormap=cv2.COLORMAP_JET):
+        # apply the supplied color map to the heatmap and then
+        # overlay the heatmap on the input image
+        heatmap = cv2.applyColorMap(heatmap, colormap)
+        heatmap = cv2.cvtColor(heatmap, cv2.COLOR_RGB2BGR)
+        output = cv2.addWeighted(image, alpha, heatmap, 1 - alpha, 0)
+        # return a 2-tuple of the color mapped heatmap and the output,
+        # overlaid image
+        return (heatmap, output)
+###
+
 cad_models_dict = {
     'cad_models_clinical': [
         {
@@ -198,6 +317,13 @@ cad_models_dict = {
         {
             "name": "CatBoost",
             "function": show_catboost_results,
+            "info": "Catboost does not require the Doctor's yield as input. This pretrained model achieves a reported accuracy of 78.82%.",
+            "features": ['known CAD', 'previous PCI', 'previous CABG', 'previous STROKE', 'Diabetes', 'Smoking', 'Angiopathy', 
+                        'Chronic Kindey Disease', 'ANGINA LIKE', 'INCIDENT OF PRECORDIAL PAIN', 'RST ECG', 'male', 'Obese', '40b50', '50b60']
+        },
+        {
+            "name": "Support Vector Machine",
+            "function": show_catboost_results, #TODO
             "info": "Catboost does not require the Doctor's yield as input. This pretrained model achieves a reported accuracy of 78.82%.",
             "features": ['known CAD', 'previous PCI', 'previous CABG', 'previous STROKE', 'Diabetes', 'Smoking', 'Angiopathy', 
                         'Chronic Kindey Disease', 'ANGINA LIKE', 'INCIDENT OF PRECORDIAL PAIN', 'RST ECG', 'male', 'Obese', '40b50', '50b60']
@@ -260,6 +386,10 @@ if st.session_state.get('age') is None:
     st.session_state['age'] = 0
 if st.session_state.get('weight') is None:
     st.session_state['weight'] = 0.0
+if st.session_state.get('warning') is None:
+    st.session_state['warning'] = []
+# if st.session_state.get('test') is None:
+#     st.session_state['test'] = False
 
 def transform_quantitive_cad(val, feature):
     if feature in age_cats:
@@ -431,6 +561,13 @@ if st.session_state['step'] == 'cad':
                         if val:
                             st.session_state['weight'] = val
                             st.session_state[feature] = int(transform_quantitive_cad(val, feature))
+                elif feature == "male":
+                    val = st.selectbox(cad_features_dict[feature], ['Yes','No'])
+                    if val:
+                        if val == 'Yes':
+                            st.session_state[feature] = 1
+                        else:
+                            st.session_state[feature] = 0
                 else:
                     val = st.selectbox(cad_features_dict[feature], ['Yes','No','N/A'])
                     if val:
@@ -439,7 +576,8 @@ if st.session_state['step'] == 'cad':
                         elif val == 'No':
                             st.session_state[feature] = 0
                         else:
-                            st.session_state[feature] = None
+                            # if N/A is selected use the default values
+                            st.session_state[feature] = cad_default_values[feature]
 
             col1, col2, col3 = st.columns([2, 6, 1])
             if col1.form_submit_button("Submit"):
@@ -496,12 +634,17 @@ if st.session_state['step'] == 'cad':
 
             # st.header("Clinical data only models")
             for model in selected_model_dict:
+                # do not show models that require the expert's yield if we do not have the yield
+                if 'Doctor: Healthy' in model["features"] and st.session_state["Doctor: Healthy"] is None:
+                    continue
                 with st.container(border=True):
                     # Divide the container into two columns: 1/3 button, 2/3 info
                     col1, col2 = st.columns([1, 2])
 
                     # Button in the first column (1/3)
                     if col1.button(model["name"]):
+                        # if not st.session_state['test']:
+                        #     st.warning('This is a warning', icon="⚠️")
                         st.session_state['step'] = 'cad_results'
                         st.session_state['model'] = model
                         st.session_state['model_type'] = 'clinical'
@@ -570,7 +713,7 @@ if st.session_state['step'] == 'nsclc':
                         st.session_state[feature] = transform_nsclc_vals(val, feature)
                 else:
                     # val = st.checkbox(feature, value=st.session_state[feature])
-                    val = st.number_input(feature, value=None, placeholder="Insert a value...", step=0.1, format="%g")
+                    val = st.number_input(feature, value=None, placeholder="Insert a value...", min_value=0.1, step=0.1, format="%g")
                     if val:
                         if feature == "GLU":
                             st.session_state[feature] = int(val)
@@ -579,9 +722,29 @@ if st.session_state['step'] == 'nsclc':
 
             col1, col2, col3 = st.columns([2, 6, 1])
             if col1.form_submit_button("Submit"):
+                st.session_state['Fdg'] = st.session_state['SUV']
+                if st.session_state['BMI'] == 0:
+                    st.session_state['BMI'] = 26.23 # set to avg
+                    st.session_state['warning'].append("Using default value 26.23 for BMI.")
+                if st.session_state['GLU'] == 0:
+                    st.session_state['warning'].append("Using default value 111 for GLU.")
+                    st.session_state['GLU'] = 111 # set to avg
                 st.session_state['nsclc_patient_info'] = True
                 print(f"state: {st.session_state}")
-                st.rerun()
+                
+                print([feature for feature in nsclc_mandatory_features])
+                if any( st.session_state[feature] == 0 for feature in nsclc_mandatory_features):
+                    for feature in nsclc_mandatory_features:
+                        if st.session_state[feature] == 0:
+                            st.warning(f'{feature} cannot be empty', icon="❌")
+                            print(f"yes!: {feature} | {st.session_state[feature]}")
+                else:
+                    if len(st.session_state['warning']) > 0:
+                        for warning in st.session_state['warning']:
+                            st.warning(warning, icon="⚠️")
+                        time.sleep(5)
+                        st.session_state['warning'].clear()
+                    st.rerun()
             if col3.form_submit_button("Reset"):
                 for feature in cad_features_dict:
                     if feature in st.session_state:
