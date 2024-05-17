@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
+import keras
 from streamlit_option_menu import option_menu
 import joblib
 import shap
@@ -11,6 +12,8 @@ from PIL import Image, ImageDraw
 import torchvision.transforms as transforms
 from ultralytics import YOLO
 import time
+import os
+import tempfile
 
 # App vars and functions
 cad_features_dict = {
@@ -34,6 +37,7 @@ cad_features_dict = {
     "RST ECG": "Does the patient have RST ECG?",
     "male": "Is the patient male?",
     "CNN_Healthy": "Does the CNN report the patient as healthy?",
+    "BMI": "What is the Body Mass Index of the patient?",
     "Overweight": "",
     "Obese": "",
     "normal_weight":"",
@@ -84,11 +88,15 @@ nsclc_mandatory_features = ["SUV", "Diameter"]
 weight_cats = ["Overweight","Obese","normal_weight"]
 age_cats = ["u40","40b50","50b60","o60"]
 
-def cad_pred_print(pred):
+def cad_pred_print(pred, score=None):
+    pred = int(pred)
     if not pred:
         st.header(f"Results for CAD: :green[Healthy]")
     else:
         st.header(f"Results for CAD: :red[CAD]")
+    if score:
+        score = float(score)
+        st.subheader(f"Confidence score: {score:.2f}")
 
 def nsclc_pred_print(pred, score=None):
     if not pred:
@@ -96,7 +104,33 @@ def nsclc_pred_print(pred, score=None):
     else:
         st.header(f"Results for NSCLC: :red[Malignant]")
     if score:
+        score = float(score)
         st.subheader(f"Confidence score: {score:.2f}")
+
+def spect_pred_print(classification_preds, preds):
+    if (classification_preds[0, 0] == 1) :
+        st.header(f"Results for CAD: :red[Infarction]")
+        st.subheader(f"Confidence score: {float(preds[0,0]):.2f}")
+    elif (classification_preds[0, 1] == 1) :
+        st.header(f"Results for CAD: :yellow[Ischemic]")
+        st.subheader(f"Confidence score: {float(preds[0,1]):.2f}")
+    elif (classification_preds[0, 2] == 1) :
+        st.header(f"Results for CAD: :green[Normal]")
+        st.subheader(f"Confidence score: {float(preds[0,2]):.2f}")
+
+def save_uploaded_file(uploaded_file):
+    # Create a temporary directory
+    temp_dir = tempfile.mkdtemp()
+
+    # Save the uploaded file to the temporary directory
+    file_path = os.path.join(temp_dir, uploaded_file.name)
+    with open(file_path, "wb") as f:
+        f.write(uploaded_file.getvalue())
+
+    return file_path
+
+def sig(x):
+    return 1/(1 + np.exp(-x))
 
 def show_random_forest_results(feature_values):
     data = pd.DataFrame([feature_values])
@@ -133,6 +167,96 @@ def show_adaboost_results(feature_values):
     st.subheader(f"Results Explanation")
     # code for SHAP visualization
     tree_xai(loaded_model, dataframe, model_prediction[0])
+
+def FCM_based_prediction(clinical_array, best_position, num_dimensions, study):
+    if study == 'cad':
+        user_bmi = int(clinical_array['BMI'])
+        # Min and max values for age
+        min_bmi = 15
+        max_bmi = 45
+        # Perform min-max normalization for the user-provided age
+        normalized_bmi = (user_bmi - min_bmi) / (max_bmi - min_bmi)
+        clinical_array['BMI'] = normalized_bmi
+        
+    if study == 'nsclc' or study == 'nsclc_multimodal':
+        user_bmi = int(clinical_array['BMI'])
+        normalized_bmi = user_bmi / 3
+        clinical_array['BMI'] = normalized_bmi
+        
+        user_diameter = float(clinical_array['Diameter'])
+        normalized_diameter = user_diameter / 70
+        clinical_array['Diameter'] = normalized_diameter
+        
+        user_suv = float(clinical_array['SUV'])
+        normalized_suv = user_suv / 30
+        clinical_array['SUV'] = normalized_suv
+ 
+    # User-provided age
+    user_age = int(clinical_array['age'])
+
+    # Min and max values for age
+    min_age = 1
+    max_age = 120
+
+    # Perform min-max normalization for the user-provided age
+    normalized_age = (user_age - min_age) / (max_age - min_age)
+
+    # Update the dictionary with the normalized age value
+    clinical_array['age'] = normalized_age
+
+    
+    clinical_array_list_values = [int(value) for value in clinical_array.values()]
+    clinical_array_list_values = [int(value) for value in clinical_array.values()]
+
+    clinical_array_list_values.append(0.5)
+
+    # Initialize predicted_results with zeros
+    predicted_results = [0.0] * num_dimensions
+    best_position = best_position[1:]
+    # Perform iterations for update
+    # for iteration in range(num_iterations):
+        # Keep the previous values and start from there
+    num_epochs=25
+    concept_evolution = np.zeros((num_epochs, num_dimensions))
+    for epoch in range(num_epochs):
+        for i in range(0, num_dimensions):
+            sum_temp = 0
+
+            # Iterate through each dimension
+            for j in range(0, num_dimensions):
+                if i == j:
+                    continue
+                else:
+                    sum_temp += best_position[j][i] * clinical_array_list_values[j]
+
+            # Update the predicted result
+            predicted_results[i] += sum_temp
+            predicted_results[i] = sig(predicted_results[i])
+    output_prediction = predicted_results[-1]
+
+    limit = 0.6
+    # if study== 'nsclc_multimodal':
+    #     limit = 0.8
+    
+    binary_prediction = output_prediction > limit
+
+    return binary_prediction, output_prediction
+
+def show_fcm_pso_results(feature_values):
+    if st.session_state['cad_patient_info']:
+        study = "cad"
+        df = pd.read_excel("trained_models/fcm_cad_mean_values.xlsx", header=None)
+    else:
+        feature_values = transform_fcm_nsclc_vals(feature_values)
+        print(f"feat_vals: {feature_values}")
+        study = "nsclc"
+        df = pd.read_excel("trained_models/fcm_nsclc_mean_values.xlsx", header=None)
+    best_position = df.to_numpy()
+    bin_pred, out_pred = FCM_based_prediction(feature_values,best_position,num_dimensions=len(feature_values), study=study)
+    if study == 'cad':
+        cad_pred_print(bin_pred, out_pred)
+    else:
+        nsclc_pred_print(bin_pred, out_pred)
 
 # Function to preprocess an image object
 def preprocess_image(image, size=(640, 640)):
@@ -305,6 +429,85 @@ class GradCAM:
         # overlaid image
         return (heatmap, output)
 ###
+def show_cnn_grad_cam_results(image, mode="PET", case='default'):
+    pixel_size=200
+    model_layer = ''
+    cnn_model=keras.models.load_model("trained_models/pet_vgg16.keras")
+    if mode =='PET':
+        cnn_model = keras.models.load_model("trained_models/pet_vgg16.keras")
+        pixel_size = 100
+        model_layer = 'block5_conv3'
+        
+        
+    if mode =='CT':
+        cnn_model = keras.models.load_model("trained_models/ct_vgg16.keras")
+        pixel_size = 100
+        model_layer = 'block5_conv3'
+        
+    if mode =='Polar Maps':
+        cnn_model = keras.models.load_model("trained_models/polar_maps.keras")
+        pixel_size = 300
+        model_layer = 'conv2d_2'
+    
+    if mode =='SPECT':
+        cnn_model = keras.models.load_model("trained_models/spect_model")
+        pixel_size = 250
+        model_layer = 'conv2d_3'
+
+    res_image = cv2.resize(image, (pixel_size, pixel_size))
+    res_image = res_image.astype('float32') / 255
+    res_image = np.expand_dims(res_image, axis=0)
+
+    preds = cnn_model.predict(res_image) 
+
+    
+    if mode == 'SPECT':
+        classification_preds = (cnn_model.predict(res_image) > 0.5).astype(int)
+
+        if (classification_preds[0, 0] == 1) :
+            print("\n The model predicts that this image instance exhibits signs indicative of an infarction with a probability ", preds[0,0])
+        if (classification_preds[0, 1] == 1) :
+            print("\n The model predicts that this image instance exhibits signs indicative of ischemic case with a probability ", preds[0,1])
+        if (classification_preds[0, 2] == 1) :
+            print("\n The model predicts that this image instance exhibits signs indicative of normal case with a probability ", preds[0,2])
+    
+    else:
+        binary_preds = (preds > 0.5).astype(int)
+        if (binary_preds == 0) :
+            print("\nThe image is predicted as Benign with a probability ", preds)
+        else :
+            print("\nThe image is predicted as Malignant with a probability ", preds)
+
+    i = np.argmax(preds[0])
+
+    icam = GradCAM(cnn_model, i, model_layer) 
+    heatmap = icam.compute_heatmap(res_image)
+    heatmap = cv2.resize(heatmap, (pixel_size, pixel_size))
+
+    res_image = cv2.resize(image, (pixel_size, pixel_size))
+
+    (heatmap, output) = icam.overlay_heatmap(heatmap, res_image, alpha=0.5)
+    if mode == 'Polar Maps':
+        cad_pred_print(binary_preds, preds)
+    elif mode == 'SPECT':
+        spect_pred_print(classification_preds, preds)
+    else:
+        nsclc_pred_print(binary_preds, preds)
+    # some padding
+    st.markdown("")
+    st.markdown("")
+    col1, col2, col3 = st.columns([3, 1, 3])
+    with col1:
+        col1.header("Original")
+        st.image(cv2.cvtColor(image, cv2.COLOR_BGR2RGB), caption="Uploaded Image", width=200)
+    with col3:
+        col3.header("XAI Image")
+        st.image(heatmap, caption="GRAD-CAM Image", width=200)
+    
+    if case == 'Multimodal':
+        return  preds 
+
+    return
 
 cad_models_dict = {
     'cad_models_clinical': [
@@ -322,19 +525,26 @@ cad_models_dict = {
                         'Chronic Kindey Disease', 'ANGINA LIKE', 'INCIDENT OF PRECORDIAL PAIN', 'RST ECG', 'male', 'Obese', '40b50', '50b60']
         },
         {
-            "name": "Support Vector Machine",
-            "function": show_catboost_results, #TODO
-            "info": "Catboost does not require the Doctor's yield as input. This pretrained model achieves a reported accuracy of 78.82%.",
-            "features": ['known CAD', 'previous PCI', 'previous CABG', 'previous STROKE', 'Diabetes', 'Smoking', 'Angiopathy', 
-                        'Chronic Kindey Disease', 'ANGINA LIKE', 'INCIDENT OF PRECORDIAL PAIN', 'RST ECG', 'male', 'Obese', '40b50', '50b60']
+            "name": "FCM-PSO",
+            "function": show_fcm_pso_results,
+            "info": "FCM-PSO requires the Doctor's yield as input. This pretrained model achieves a reported accuracy of 74.98%.",
+            "features": ['male', 'age', 'BMI', 'known CAD', 'previous AMI', 'previous PCI', 'previous CABG', 'previous STROKE', 'Diabetes', 'Smoking', 'Arterial Hypertension',
+			            'Dislipidemia', 'Angiopathy', 'Chronic Kindey Disease', 'Family History of CAD', 'ASYMPTOMATIC', 'ATYPICAL SYMPTOMS', 'ANGINA LIKE', 'DYSPNOEA ON EXERTION',
+			            'INCIDENT OF PRECORDIAL PAIN', 'RST ECG', 'Doctor: Healthy']
         },
     ],
     'cad_models_image': [
         {
-            "name": "Random Forest",
-            "function": show_random_forest_results,
-            "info": "Random Forest is expecting Doctor's yield as input. This pretrained model has a reported accuracy of 83.52%.",
-            "features": ['known CAD', 'previous PCI', 'Diabetes', 'Chronic Kindey Disease', 'ANGINA LIKE', 'RST ECG', 'male', 'u40', 'Doctor: Healthy']
+            "name": "RGB-CNN-Polar-Maps",
+            "function": show_cnn_grad_cam_results,
+            "info": "RGB-CNN is trained on Polar maps image data. This pretrained model has a reported accuracy of 81.25%.",
+            "modes": ["Polar Maps"],
+        },
+        {
+            "name": "RGB-CNN-SPECT-MPI",
+            "function": show_cnn_grad_cam_results,
+            "info": "RGB-CNN is trained on SPECT-MPI image data. This pretrained model has a reported accuracy of 84.37%.",
+            "modes": ["SPECT"],
         },
     ],
     'cad_models_multimodal': [
@@ -355,12 +565,23 @@ nsclc_models_dict = {
             "info": "AdaBoost model architecture. This pretrained model has a reported accuracy of 94.33%.",
             "features": ['Gender','Fdg','Age','BMI','GLU','SUV','Diameter','Location','Type','Limits']
         },
+        {
+            "name": "FCM-PSO",
+            "function": show_fcm_pso_results,
+            "info": "FCM-PSO handles clinical data as input concepts. PSO is utilized as a learning technique. This pretrained model has a reported accuracy of %.",
+            "features": ['Gender','Fdg','Age','BMI','GLU','SUV','Diameter','Location','Type','Limits']
+        }
     ],
     'nsclc_models_image': [
         {
             "name": "YOLOv8",
             "function": yolo_results,
-            "info": "You Only Look Once (YOLO) version 8 can be applied to CAD or PET medical scans. This pretrained model has a reported accuracy of 89% for PET images and 92.3% for CT.",
+            "info": "You Only Look Once (YOLO) version 8 can be applied to CT or PET medical scans. This pretrained model has a reported accuracy of 89% for PET images and 92.3% for CT.",
+        },
+        {
+            "name": "VGG-16",
+            "function": show_cnn_grad_cam_results,
+            "info": "VGG-16 is a pre-trained network, which has been fine-tuned to CT or PET medical scans. This pretrained model has a reported accuracy of 85% for PET images and 87.5% for CT.",
         },
     ],
     'nsclc_multimodal': [
@@ -440,6 +661,63 @@ def transform_nsclc_vals(val, feature):
         "well-defined": 5,
         }
         return limits_mapping.get(val, None)
+    
+def transform_fcm_nsclc_vals(features_dict):
+    if "Location" in features_dict.keys():
+        for name in ['LOCATION_LEFT_UPPER_LOBE', 'LOCATION_RIGHT_UPPER_LOBE', 'LOCATION_LEFT_LOWER_LOBE',
+                     'LOCATION_RIGHT_LOWER_LOBE', 'LOCATION_MIDDLE', 'LOCATION_LINGULA']:
+            features_dict[name] = 0
+        if features_dict["Location"] == 0:
+            features_dict["LOCATION_LEFT_LOWER_LOBE"] = 1
+        elif features_dict["Location"] == 1:
+            features_dict["LOCATION_LINGULA"] = 1
+        elif features_dict["Location"] == 2:
+            features_dict["LOCATION_MIDDLE"] = 1
+        elif features_dict["Location"] == 3:
+            features_dict["LOCATION_RIGHT_LOWER_LOBE"] = 1
+        elif features_dict["Location"] == 4:
+            features_dict["LOCATION_RIGHT_UPPER_LOBE"] = 1
+        elif features_dict["Location"] == 5:
+            features_dict["LOCATION_LEFT_UPPER_LOBE"] = 1
+        del features_dict["Location"]
+
+    if "Type" in features_dict.keys():
+        for name in ['TYPE_SOLID', 'TYPE_GROUND_CLASS', 'TYPE_CONSOLIDATED',
+                     'TYPE_SPECKLED', 'TYPE_SEMI_SOLID', 'TYPE_calcified', 'TYPE_cavitary']:
+            features_dict[name] = 0
+        if features_dict["Type"] == 0:
+            features_dict["TYPE_cavitary"] = 1
+        elif features_dict["Type"] == 1:
+            features_dict["TYPE_GROUND_CLASS"] = 1
+        elif features_dict["Type"] == 2:
+            features_dict["TYPE_calcified"] = 1
+        elif features_dict["Type"] == 3:
+            features_dict["TYPE_SEMI_SOLID"] = 1
+        elif features_dict["Type"] == 4:
+            features_dict["TYPE_SOLID"] = 1
+        elif features_dict["Type"] == 5:
+            features_dict["TYPE_SPECKLED"] = 1
+        elif features_dict["Type"] == 6:
+            features_dict["TYPE_CONSOLIDATED"] = 1
+        del features_dict["Type"]
+
+    if "Limits" in features_dict.keys():
+        for name in ['BOUNDARIES_spiculated', 'BOUNDARIES_lobulated', 'BOUNDARIES_well_defined',
+                     'BOUNDARIES_ill-defined']:
+            features_dict[name] = 0
+        if features_dict["Limits"] == 4:
+            features_dict["BOUNDARIES_spiculated"] = 1
+        elif features_dict["Limits"] == 3:
+            features_dict["BOUNDARIES_lobulated"] = 1
+        elif features_dict["Limits"] == 5:
+            features_dict["BOUNDARIES_well_defined"] = 1
+        elif features_dict["Limits"] == 1:
+            features_dict["BOUNDARIES_ill-defined"] = 1
+        del features_dict["Limits"]
+    if "Age" in features_dict.keys():
+        features_dict["age"] = features_dict["Age"]
+        del features_dict["Age"]
+    return features_dict
 
 # function to print SHAP values and plots for tree ML models
 def tree_xai(model, X, val):
@@ -552,6 +830,10 @@ if st.session_state['step'] == 'cad':
                         if val:
                             st.session_state['age'] = val
                             st.session_state[feature] = int(transform_quantitive_cad(val, feature))
+                elif feature == "BMI":
+                    val = st.slider("Body Mass Index (BMI):", min_value=0.0, max_value=50.0, step=0.01, value=1.0*st.session_state[feature])
+                    if val:
+                        st.session_state[feature] = val
                 elif feature in weight_cats:
                     if weight_asked:
                         st.session_state[feature] = int(transform_quantitive_cad(st.session_state['weight'], feature))
@@ -594,13 +876,15 @@ if st.session_state['step'] == 'cad':
                 print(f"state: {st.session_state}")
                 st.rerun()
         # Upload image
-        uploaded_img = st.file_uploader("Choose an image...", type=["jpg", "jpeg", "png"])
-        # Select image type (PET or CT)
-        st.session_state['image_type'] = st.selectbox("Select image type:", ["PET", "CT"])
+        uploaded_img = st.file_uploader("Choose an image...", type=["jpg", "jpeg", "png", "tiff"])
+        # Select image type (Polar Maps or SPECT)
+        st.session_state['image_type'] = st.selectbox("Select image type:", ["Polar Maps", "SPECT"])
         if uploaded_img:
             # Convert the uploaded image to PIL Image
-            pil_image = Image.open(uploaded_img)
-            st.session_state['image'] = pil_image
+            # pil_image = Image.open(uploaded_img)
+            file_path = save_uploaded_file(uploaded_img)
+            cv_image = cv2.imread(file_path)
+            st.session_state['cv_image'] = cv_image
 
     with tab2:
         st.header("Input model preferences")
@@ -619,11 +903,10 @@ if st.session_state['step'] == 'cad':
                 st.rerun()
 
     with tab3:
-        st.header("Select a model From the available list")
+        st.header("Select a model from the available list")
         if any((
             st.session_state['cad_model_type'] is None,
-            st.session_state['cad_model_info'] is not True,
-            st.session_state['cad_patient_info'] is not True
+            st.session_state['cad_model_info'] is not True
         )):
             st.markdown("Please first complete Steps 1 & 2")
         else:
@@ -635,7 +918,9 @@ if st.session_state['step'] == 'cad':
             # st.header("Clinical data only models")
             for model in selected_model_dict:
                 # do not show models that require the expert's yield if we do not have the yield
-                if 'Doctor: Healthy' in model["features"] and st.session_state["Doctor: Healthy"] is None:
+                if "features" in model.keys() and 'Doctor: Healthy' in model["features"] and st.session_state["Doctor: Healthy"] is None:
+                    continue
+                if "modes" in model.keys() and st.session_state['image_type'] not in model["modes"]:
                     continue
                 with st.container(border=True):
                     # Divide the container into two columns: 1/3 button, 2/3 info
@@ -647,7 +932,7 @@ if st.session_state['step'] == 'cad':
                         #     st.warning('This is a warning', icon="⚠️")
                         st.session_state['step'] = 'cad_results'
                         st.session_state['model'] = model
-                        st.session_state['model_type'] = 'clinical'
+                        # st.session_state['model_type'] = 'clinical'
                         st.rerun()
 
                     # Info in the second column (2/3)
@@ -655,16 +940,18 @@ if st.session_state['step'] == 'cad':
 
 # Show CAD Results
 if st.session_state['step'] == 'cad_results':
+    print(f"state: {st.session_state}")
     spec_model = st.session_state['model']
     st.sidebar.subheader("CAD Results")
-    if st.session_state['model_type'] == 'clinical':
+    if st.session_state['cad_model_type'] == 'cad_models_clinical':
         features_vals = {}
         for feature in spec_model['features']:
             features_vals[feature] = st.session_state[feature]
         spec_model["function"](features_vals)
-    elif st.session_state['model_type'] == 'images':
-        st.markdown("ZONK!")
-    elif st.session_state['model_type'] == 'multimodal':
+    elif st.session_state['cad_model_type'] == 'cad_models_image':
+        print(f"state: {st.session_state}")
+        spec_model["function"](st.session_state['cv_image'], st.session_state['image_type'], "default")
+    elif st.session_state['cad_model_type'] == 'cad_models_multimodal':
         st.markdown("ZONK!")
     if st.button("Close"):
         selected = "Home"
@@ -737,7 +1024,6 @@ if st.session_state['step'] == 'nsclc':
                     for feature in nsclc_mandatory_features:
                         if st.session_state[feature] == 0:
                             st.warning(f'{feature} cannot be empty', icon="❌")
-                            print(f"yes!: {feature} | {st.session_state[feature]}")
                 else:
                     if len(st.session_state['warning']) > 0:
                         for warning in st.session_state['warning']:
@@ -762,7 +1048,11 @@ if st.session_state['step'] == 'nsclc':
         if uploaded_img:
             # Convert the uploaded image to PIL Image
             pil_image = Image.open(uploaded_img)
-            st.session_state['image'] = pil_image
+            st.session_state['pil_image'] = pil_image
+
+            file_path = save_uploaded_file(uploaded_img)
+            cv_image = cv2.imread(file_path)
+            st.session_state['cv_image'] = cv_image
 
     with tab2:
         st.header("Input model preferences")
@@ -781,10 +1071,9 @@ if st.session_state['step'] == 'nsclc':
                 st.rerun()
 
     with tab3:
-        st.header("Select a model From the available list")
+        st.header("Select a model from the available list")
         if any((
             st.session_state['nsclc_model_type'] is None,
-            st.session_state['nsclc_model_info'] is not True,
             st.session_state['nsclc_model_info'] is not True
         )):
             st.markdown("Please first complete Steps 1 & 2")
@@ -804,7 +1093,7 @@ if st.session_state['step'] == 'nsclc':
                     if col1.button(model["name"]):
                         st.session_state['step'] = 'nsclc_results'
                         st.session_state['model'] = model
-                        st.session_state['model_type'] = 'clinical'
+                        st.session_state['model_type'] = 'clinical' #TODO is this needed?
                         st.rerun()
 
                     # Info in the second column (2/3)
@@ -821,7 +1110,11 @@ if st.session_state['step'] == 'nsclc_results':
         print(f"features_vals: {features_vals}")
         spec_model["function"](features_vals)
     elif st.session_state['nsclc_model_type'] == 'nsclc_models_image':
-        spec_model["function"](st.session_state['image'], st.session_state['image_type'])
+        print(f"state: {st.session_state}")
+        if spec_model["name"] == "YOLOv8": 
+            spec_model["function"](st.session_state['pil_image'], st.session_state['image_type'])
+        else:
+            spec_model["function"](st.session_state['cv_image'], st.session_state['image_type'])
     elif st.session_state['nsclc_model_type'] == 'nsclc_models_multimodal':
         st.markdown("ZONK!")
     if st.button("Close"):
