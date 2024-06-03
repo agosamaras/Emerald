@@ -221,7 +221,6 @@ def FCM_based_prediction(clinical_array, best_position, num_dimensions, study):
     # Update the dictionary with the normalized age value
     clinical_array['age'] = normalized_age
 
-    
     clinical_array_list_values = [int(value) for value in clinical_array.values()]
     clinical_array_list_values = [int(value) for value in clinical_array.values()]
 
@@ -230,25 +229,20 @@ def FCM_based_prediction(clinical_array, best_position, num_dimensions, study):
     # Initialize predicted_results with zeros
     predicted_results = [0.0] * num_dimensions
     best_position = best_position[1:]
-    # Perform iterations for update
-    # for iteration in range(num_iterations):
-        # Keep the previous values and start from there
-    num_epochs=25
-    concept_evolution = np.zeros((num_epochs, num_dimensions))
-    for epoch in range(num_epochs):
-        for i in range(0, num_dimensions):
-            sum_temp = 0
 
-            # Iterate through each dimension
-            for j in range(0, num_dimensions):
-                if i == j:
-                    continue
-                else:
-                    sum_temp += best_position[j][i] * clinical_array_list_values[j]
+    for i in range(0, num_dimensions):
+        sum_temp = 0
 
-            # Update the predicted result
-            predicted_results[i] += sum_temp
-            predicted_results[i] = sig(predicted_results[i])
+        # Iterate through each dimension
+        for j in range(0, num_dimensions):
+            if i == j:
+                continue
+            else:
+                sum_temp += best_position[j][i] * clinical_array_list_values[j]
+
+        # Update the predicted result
+        predicted_results[i] += sum_temp
+        predicted_results[i] = sig(predicted_results[i])
     output_prediction = predicted_results[-1]
 
     limit = 0.6
