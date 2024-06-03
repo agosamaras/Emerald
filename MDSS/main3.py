@@ -240,23 +240,28 @@ def FCM_based_prediction(clinical_array, best_position, num_dimensions, study):
     
     binary_prediction = output_prediction > limit
 
-    return binary_prediction, output_prediction
+    return binary_prediction, output_prediction, predicted_results
 
 def show_fcm_pso_results(feature_values):
     if st.session_state['cad_patient_info']:
         study = "cad"
         df = pd.read_excel("trained_models/fcm_cad_mean_values.xlsx", header=None)
+        if feature_values['Doctor: Healthy'] == 1:
+            feature_values['Doctor: Healthy'] = 0
+        else:
+            feature_values['Doctor: Healthy'] = 1
     else:
         feature_values = transform_fcm_nsclc_vals(feature_values)
-        print(f"feat_vals: {feature_values}")
         study = "nsclc"
         df = pd.read_excel("trained_models/fcm_nsclc_mean_values.xlsx", header=None)
     best_position = df.to_numpy()
-    bin_pred, out_pred = FCM_based_prediction(feature_values,best_position,num_dimensions=len(feature_values), study=study)
+    bin_pred, out_pred, pred_results = FCM_based_prediction(feature_values,best_position,num_dimensions=len(feature_values), study=study)
     if study == 'cad':
         cad_pred_print(bin_pred, out_pred)
+        print(f"pred_results: {pred_results}") #TODO pass to NLP
     else:
         nsclc_pred_print(bin_pred, out_pred)
+        print(f"pred_results: {pred_results}") #TODO pass to NLP
 
 # Function to preprocess an image object
 def preprocess_image(image, size=(640, 640)):
@@ -321,8 +326,6 @@ def yolo_results(image, mode="PET", mask_size=60):
     res_data = results[0].probs
     prediction = res_data.top1
     conf_score = res_data.top1conf
-    # print(f"prediction: {prediction}")
-    # print(f"confidence_score: {conf_score}")
     nsclc_pred_print(prediction, conf_score)
     # some padding
     st.markdown("")
@@ -487,12 +490,67 @@ def show_cnn_grad_cam_results(image, mode="PET", case='default'):
     res_image = cv2.resize(image, (pixel_size, pixel_size))
 
     (heatmap, output) = icam.overlay_heatmap(heatmap, res_image, alpha=0.5)
-    if mode == 'Polar Maps':
-        cad_pred_print(binary_preds, preds)
-    elif mode == 'SPECT':
-        spect_pred_print(classification_preds, preds)
+    if case != 'Multimodal':
+        if mode == 'Polar Maps':
+            cad_pred_print(binary_preds, preds)
+        elif mode == 'SPECT':
+            spect_pred_print(classification_preds, preds)
+        else:
+            nsclc_pred_print(binary_preds, preds)
+
     else:
-        nsclc_pred_print(binary_preds, preds)
+        return  preds, heatmap
+
+    # some padding
+    st.markdown("")
+    st.markdown("")
+    col1, col2, col3 = st.columns([3, 1, 3])
+    with col1:
+        col1.header("Original")
+        st.image(cv2.cvtColor(image, cv2.COLOR_BGR2RGB), caption="Uploaded Image", width=200)
+    with col3:
+        col3.header("XAI Image")
+        st.image(heatmap, caption="GRAD-CAM Image", width=200)
+
+    return
+
+def show_deep_fcm_results(feature_values, image, mode="PET"):
+    if st.session_state['cad_patient_info']:
+        study = "cad"
+        df = pd.read_excel("trained_models/deepfcm_cad_mean_values.xlsx", header=None)
+        best_position = df.to_numpy()
+        num_dimensions= len(feature_values) + 2
+        cnn_prediction, heatmap = show_cnn_grad_cam_results(image, mode='Polar Maps', case='Multimodal')
+        img_type = 'Polar Maps'
+    else:
+        feature_values = transform_fcm_nsclc_vals(feature_values)
+        study = "nsclc"
+        if mode == "PET":
+            df = pd.read_excel("trained_models/deepfcm_nsclc_pet_mean_values.xlsx", header=None)
+            best_position = df.to_numpy()
+            num_dimensions= len(feature_values) + 1
+            cnn_prediction, heatmap = show_cnn_grad_cam_results(image, mode='PET', case='Multimodal')
+            img_type = 'PET'
+        else:
+            df = pd.read_excel("trained_models/deepfcm_nsclc_ct_mean_values.xlsx", header=None)
+            best_position = df.to_numpy()
+            num_dimensions= len(feature_values) + 1
+            cnn_prediction, heatmap = show_cnn_grad_cam_results(image, mode='CT', case='Multimodal')
+            img_type = 'CT'
+        
+    cnn_prediction = cnn_prediction > 0.5    
+    cnn_prediction = int(cnn_prediction[0, 0])
+    feature_values['cnn_prediction'] = cnn_prediction
+    st.session_state['cnn_prediction'] = cnn_prediction
+    
+    bin_pred, out_pred, pred_results = FCM_based_prediction(feature_values,best_position,num_dimensions, study=img_type)
+    if study == 'cad':
+        cad_pred_print(bin_pred, out_pred)
+        print(f"pred_results: {pred_results}") #TODO pass to NLP
+    else:
+        nsclc_pred_print(bin_pred, out_pred)
+        print(f"pred_results: {pred_results}") #TODO pass to NLP
+
     # some padding
     st.markdown("")
     st.markdown("")
@@ -504,9 +562,6 @@ def show_cnn_grad_cam_results(image, mode="PET", case='default'):
         col3.header("XAI Image")
         st.image(heatmap, caption="GRAD-CAM Image", width=200)
     
-    if case == 'Multimodal':
-        return  preds 
-
     return
 
 cad_models_dict = {
@@ -549,10 +604,12 @@ cad_models_dict = {
     ],
     'cad_models_multimodal': [
         {
-            "name": "Random Forest",
-            "function": show_random_forest_results,
-            "info": "Random Forest is expecting Doctor's yield as input. This pretrained model has a reported accuracy of 83.52%.",
-            "features": ['known CAD', 'previous PCI', 'Diabetes', 'Chronic Kindey Disease', 'ANGINA LIKE', 'RST ECG', 'male', 'u40', 'Doctor: Healthy']
+            "name": "DeepFCM",
+            "function": show_deep_fcm_results,
+            "info": "DeepFCM is a multimodal approach able to handle both clinical and Polar Maps imaging data. PSO is utilized as a learning technique. This pretrained model has a reported accuracy of 84.21%.",
+            "features": ['male', 'age', 'BMI', 'known CAD', 'previous AMI', 'previous PCI', 'previous CABG', 'previous STROKE', 'Diabetes', 'Smoking', 'Arterial Hypertension',
+			            'Dislipidemia', 'Angiopathy', 'Chronic Kindey Disease', 'Family History of CAD', 'ASYMPTOMATIC', 'ATYPICAL SYMPTOMS', 'ANGINA LIKE', 'DYSPNOEA ON EXERTION',
+			            'INCIDENT OF PRECORDIAL PAIN', 'RST ECG', 'Doctor: Healthy']
         },
     ]
 }
@@ -584,7 +641,13 @@ nsclc_models_dict = {
             "info": "VGG-16 is a pre-trained network, which has been fine-tuned to CT or PET medical scans. This pretrained model has a reported accuracy of 85% for PET images and 87.5% for CT.",
         },
     ],
-    'nsclc_multimodal': [
+    'nsclc_models_multimodal': [
+        {
+            "name": "DeepFCM",
+            "function": show_deep_fcm_results,
+            "info": "DeepFCM is a multimodal approach able to handle both clinical and PET/CT imaging data. PSO is utilized as a learning technique. This pretrained model has a reported accuracy of 86.45% for PET and % for CT.",
+            "features": ['Gender','Fdg','Age','BMI','GLU','SUV','Diameter','Location','Type','Limits']
+        },
     ]
 }
 
@@ -609,8 +672,8 @@ if st.session_state.get('weight') is None:
     st.session_state['weight'] = 0.0
 if st.session_state.get('warning') is None:
     st.session_state['warning'] = []
-# if st.session_state.get('test') is None:
-#     st.session_state['test'] = False
+if st.session_state.get('cv_image') is None:
+    st.session_state['cv_image'] = None
 
 def transform_quantitive_cad(val, feature):
     if feature in age_cats:
@@ -899,8 +962,14 @@ if st.session_state['step'] == 'cad':
                     st.session_state['cad_model_type'] = 'cad_models_multimodal'
 
             if st.form_submit_button("Submit"):
-                st.session_state['cad_model_info'] = True
-                st.rerun()
+                if st.session_state['cad_model_type'] == 'cad_models_multimodal' and any((
+                        st.session_state['cv_image'] is None,
+                        st.session_state['cad_patient_info'] is not True
+                    )):
+                        st.warning('Multimodal prediction for CAD requires clinical data and Polar Maps as input image', icon="❌")
+                else:
+                    st.session_state['cad_model_info'] = True
+                    st.rerun()
 
     with tab3:
         st.header("Select a model from the available list")
@@ -943,16 +1012,17 @@ if st.session_state['step'] == 'cad_results':
     print(f"state: {st.session_state}")
     spec_model = st.session_state['model']
     st.sidebar.subheader("CAD Results")
+    features_vals = {}
     if st.session_state['cad_model_type'] == 'cad_models_clinical':
-        features_vals = {}
         for feature in spec_model['features']:
             features_vals[feature] = st.session_state[feature]
         spec_model["function"](features_vals)
     elif st.session_state['cad_model_type'] == 'cad_models_image':
-        print(f"state: {st.session_state}")
         spec_model["function"](st.session_state['cv_image'], st.session_state['image_type'], "default")
     elif st.session_state['cad_model_type'] == 'cad_models_multimodal':
-        st.markdown("ZONK!")
+        for feature in spec_model['features']:
+            features_vals[feature] = st.session_state[feature]
+        spec_model["function"](features_vals, st.session_state['cv_image'], st.session_state['image_type'])
     if st.button("Close"):
         selected = "Home"
         st.session_state['step'] = 'Home'
@@ -1019,7 +1089,6 @@ if st.session_state['step'] == 'nsclc':
                 st.session_state['nsclc_patient_info'] = True
                 print(f"state: {st.session_state}")
                 
-                print([feature for feature in nsclc_mandatory_features])
                 if any( st.session_state[feature] == 0 for feature in nsclc_mandatory_features):
                     for feature in nsclc_mandatory_features:
                         if st.session_state[feature] == 0:
@@ -1067,8 +1136,14 @@ if st.session_state['step'] == 'nsclc':
                     st.session_state['nsclc_model_type'] = 'nsclc_models_multimodal'
 
             if st.form_submit_button("Submit"):
-                st.session_state['nsclc_model_info'] = True
-                st.rerun()
+                if st.session_state['nsclc_model_type'] == 'nsclc_models_multimodal' and any((
+                        st.session_state['cv_image'] is None,
+                        st.session_state['nsclc_patient_info'] is not True
+                    )):
+                        st.warning('Multimodal prediction for NSCLC requires clinical data and PET/CT as input image', icon="❌")
+                else:
+                    st.session_state['nsclc_model_info'] = True
+                    st.rerun()
 
     with tab3:
         st.header("Select a model from the available list")
@@ -1101,22 +1176,23 @@ if st.session_state['step'] == 'nsclc':
 
 # Show NSCLC Results
 if st.session_state['step'] == 'nsclc_results':
+    print(f"state: {st.session_state}")
     spec_model = st.session_state['model']
     st.sidebar.subheader("NSCLC Results")
+    features_vals = {}
     if st.session_state['nsclc_model_type'] == 'nsclc_models_clinical':
-        features_vals = {}
         for feature in spec_model['features']:
             features_vals[feature] = st.session_state[feature]
-        print(f"features_vals: {features_vals}")
         spec_model["function"](features_vals)
     elif st.session_state['nsclc_model_type'] == 'nsclc_models_image':
-        print(f"state: {st.session_state}")
         if spec_model["name"] == "YOLOv8": 
             spec_model["function"](st.session_state['pil_image'], st.session_state['image_type'])
         else:
             spec_model["function"](st.session_state['cv_image'], st.session_state['image_type'])
     elif st.session_state['nsclc_model_type'] == 'nsclc_models_multimodal':
-        st.markdown("ZONK!")
+        for feature in spec_model['features']:
+            features_vals[feature] = st.session_state[feature]
+        spec_model["function"](features_vals, st.session_state['cv_image'], st.session_state['image_type'])
     if st.button("Close"):
         selected = "Home"
         st.session_state['step'] = 'Home'
