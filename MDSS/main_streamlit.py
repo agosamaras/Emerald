@@ -14,6 +14,9 @@ from ultralytics import YOLO
 import time
 import os
 import tempfile
+import cv2
+import tensorflow as tf
+from tensorflow.keras.models import Model
 
 # App vars and functions
 cad_features_dict = {
@@ -87,6 +90,19 @@ nsclc_mandatory_features = ["SUV", "Diameter"]
 
 weight_cats = ["Overweight","Obese","normal_weight"]
 age_cats = ["u40","40b50","50b60","o60"]
+
+concept_names_list_cad_fcm = ["Gender", "Age", "BMI", "known CAD", "previous AMI", "previous PCI", "previous CABG",
+                              "previous Stroke", "Diabetes", "Smoking", "Hypertension", "Dyslipidemia", "Angiopathy",
+                              "Chronic Kidney Disease", "family history of CAD", "Asymptomatic", "Atypical Symptoms",
+                              "Angina-like", "Dysponea οn exertion", "Incident of Precordial Pain", "ECG", "Expert Diagnosis yield"]
+
+concept_names_list_nsclc_fcm = ["Age", "Gender", "BMI", "SUVmax", "Diameter", "Location of SPN inLeft Upper",
+                                "Location of SPN in Right Upper Lobe", "Location of SPN in Left Lower Lobe",
+                                "Location of SPN in Right Lower Lobe", "Location of SPN in Middle", "Location of SPN in Lingula",
+                                "Type Solid", "Type Ground Class", "Type Consolidated", "Type Speckled", "Type Semi-Solid",
+                                "Type calcified", "Type Cavitary", "Margins Spiculated", "Margins Lobulated", "Margins Well Defined",
+                                "Margins Ill-Defined"]
+
 
 def cad_pred_print(pred, score=None):
     pred = int(pred)
@@ -192,6 +208,7 @@ def FCM_based_prediction(clinical_array, best_position, num_dimensions, study):
         clinical_array['SUV'] = normalized_suv
  
     # User-provided age
+    print(f"clinical_array: {clinical_array}")
     user_age = int(clinical_array['age'])
 
     # Min and max values for age
@@ -259,9 +276,15 @@ def show_fcm_pso_results(feature_values):
     if study == 'cad':
         cad_pred_print(bin_pred, out_pred)
         print(f"pred_results: {pred_results}") #TODO pass to NLP
+        st.text("The concept_values for each concept are the following:")
+        for name, val in zip(concept_names_list_cad_fcm, pred_results):
+            st.text(f"For {name}: {val:.2f}")
     else:
         nsclc_pred_print(bin_pred, out_pred)
         print(f"pred_results: {pred_results}") #TODO pass to NLP
+        st.text("The concept_values for each concept are the following:")
+        for name, val in zip(concept_names_list_nsclc_fcm, pred_results):
+            st.text(f"For {name}: {val:.2f}")
 
 # Function to preprocess an image object
 def preprocess_image(image, size=(640, 640)):
@@ -340,9 +363,6 @@ def yolo_results(image, mode="PET", mask_size=60):
     return
 
 ### Anna's models
-import cv2
-import tensorflow as tf
-from tensorflow.keras.models import Model
 class GradCAM:
     def __init__(self, model, classIdx, layerName=None):
         # store the model, the class index used to measure the class
@@ -547,9 +567,19 @@ def show_deep_fcm_results(feature_values, image, mode="PET"):
     if study == 'cad':
         cad_pred_print(bin_pred, out_pred)
         print(f"pred_results: {pred_results}") #TODO pass to NLP
+        st.text("The concept_values for each concept are the following:")
+        temp_name_list = concept_names_list_cad_fcm
+        temp_name_list.append("CNN prediction")
+        for name, val in zip(temp_name_list, pred_results):
+            st.text(f"For {name}: {val:.2f}")
     else:
         nsclc_pred_print(bin_pred, out_pred)
         print(f"pred_results: {pred_results}") #TODO pass to NLP
+        st.text("The concept_values for each concept are the following:")
+        temp_name_list = concept_names_list_nsclc_fcm
+        temp_name_list.append("CNN prediction")
+        for name, val in zip(temp_name_list, pred_results):
+            st.text(f"For {name}: {val:.2f}")
 
     # some padding
     st.markdown("")
@@ -625,7 +655,7 @@ nsclc_models_dict = {
         {
             "name": "FCM-PSO",
             "function": show_fcm_pso_results,
-            "info": "FCM-PSO handles clinical data as input concepts. PSO is utilized as a learning technique. This pretrained model has a reported accuracy of %.",
+            "info": "FCM-PSO handles clinical data as input concepts. PSO is utilized as a learning technique. This pretrained model has a reported accuracy of 82.61%.",
             "features": ['Gender','Fdg','Age','BMI','GLU','SUV','Diameter','Location','Type','Limits']
         }
     ],
@@ -645,7 +675,7 @@ nsclc_models_dict = {
         {
             "name": "DeepFCM",
             "function": show_deep_fcm_results,
-            "info": "DeepFCM is a multimodal approach able to handle both clinical and PET/CT imaging data. PSO is utilized as a learning technique. This pretrained model has a reported accuracy of 86.45% for PET and % for CT.",
+            "info": "DeepFCM is a multimodal approach able to handle both clinical and PET/CT imaging data. PSO is utilized as a learning technique. This pretrained model has a reported accuracy of 86.45% for PET and 86.96% for CT.",
             "features": ['Gender','Fdg','Age','BMI','GLU','SUV','Diameter','Location','Type','Limits']
         },
     ]
