@@ -1144,8 +1144,7 @@ if st.session_state['step'] == 'nsclc':
                     if val:
                         st.session_state[feature] = transform_nsclc_vals(val, feature)
                 else:
-                    # val = st.checkbox(feature, value=st.session_state[feature])
-                    val = st.number_input(feature, value=None, placeholder="Insert a value...", min_value=0.1, step=0.1, format="%g")
+                    val = st.number_input(feature, value=None, placeholder="Accepts positive values with single digit precision - e.g. 1.8", min_value=0.1, step=0.1, format="%0.1f")
                     if val:
                         if feature == "GLU":
                             st.session_state[feature] = int(val)
