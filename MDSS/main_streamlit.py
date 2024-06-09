@@ -17,6 +17,7 @@ import tempfile
 import cv2
 import tensorflow as tf
 from tensorflow.keras.models import Model
+from openai import OpenAI
 
 # App vars and functions
 cad_features_dict = {
@@ -71,8 +72,11 @@ cad_default_values = {
     "INCIDENT OF PRECORDIAL PAIN": 0,
     "RST ECG": 0,
     "CNN_Healthy": 0,
+    "BMI": 26.23,
     "Doctor: Healthy": None,
 }
+
+cad_mandatory_features = ["age", "weight"]
 
 nsclc_features_dict = {
     "Age": "What is the age of the patient?",
@@ -103,6 +107,10 @@ concept_names_list_nsclc_fcm = ["Age", "Gender", "BMI", "SUVmax", "Diameter", "L
                                 "Type calcified", "Type Cavitary", "Margins Spiculated", "Margins Lobulated", "Margins Well Defined",
                                 "Margins Ill-Defined"]
 
+client = OpenAI(
+    # This is the default and can be omitted
+    api_key="",
+)
 
 def cad_pred_print(pred, score=None):
     pred = int(pred)
@@ -122,6 +130,29 @@ def nsclc_pred_print(pred, score=None):
     if score:
         score = float(score)
         st.subheader(f"Confidence score: {score:.2f}")
+
+def trigger_gpt(case, values, feature_names):
+    global client
+    if case == "CAD":
+        prompt = f"The following SHAP explanation is for a {case} classification case: {values}. The according feature names are {feature_names}. Interpret the findings to doctors, in comprehensive way without making it technical and mention which features played major role."
+
+    # Set the model to use
+    model_engine = "gpt-3.5-turbo"
+
+    chat_completion = client.chat.completions.create(
+        messages=[
+            {
+                "role": "user",
+                "content": prompt,
+            }
+        ],
+        model="gpt-3.5-turbo",
+    )
+
+    # Return the response
+    print(chat_completion.choices[0].message.content)
+    # return str(chat_completion.choices[0].message)
+    return
 
 def spect_pred_print(classification_preds, preds):
     if (classification_preds[0, 0] == 1) :
@@ -824,6 +855,8 @@ def tree_xai(model, X, val):
     fig_force_0 = shap.force_plot(val, shap_values[0][0], X.iloc[0, :], matplotlib=True)
     st.pyplot(fig_force_0)
 
+    st.text(trigger_gpt("CAD", exp, X.columns))
+
 # function to print SHAP values and plots for CatBoost
 def xai_cat(model, X):
     explainer = shap.TreeExplainer(model)
@@ -898,7 +931,10 @@ elif selected == "Contact Us":
 
 # Process CAD Prediction
 if st.session_state['step'] == 'cad':
-    st.sidebar.write("Select a CAD model:")
+    st.sidebar.write("**Order of steps for prediction**")
+    st.sidebar.write("Step 1. Input patient info")
+    st.sidebar.write("Step 2. Select a desired model configuration")
+    st.sidebar.write("Step 3. Select a model from the available selection")
     tab1, tab2, tab3 = st.tabs(["Step 1. Input patient info", "Step 2. Model configuration", "Step 3. Select a model"])
     with tab1:
         st.header("Input patient info")
@@ -947,12 +983,24 @@ if st.session_state['step'] == 'cad':
                         else:
                             # if N/A is selected use the default values
                             st.session_state[feature] = cad_default_values[feature]
+                            st.session_state['warning'].append(f"Using default value {cad_default_values[feature]} for {feature}.")
 
             col1, col2, col3 = st.columns([2, 6, 1])
             if col1.form_submit_button("Submit"):
                 st.session_state['cad_patient_info'] = True
                 print(f"state: {st.session_state}")
-                st.rerun()
+
+                if any( st.session_state[feature] == 0 for feature in cad_mandatory_features):
+                    for feature in cad_mandatory_features:
+                        if st.session_state[feature] == 0:
+                            st.warning(f'{feature} cannot be empty', icon="❌")
+                else:
+                    if len(st.session_state['warning']) > 0:
+                        for warning in st.session_state['warning']:
+                            st.warning(warning, icon="⚠️")
+                        time.sleep(5)
+                        st.session_state['warning'].clear()
+                    st.rerun()
             if col3.form_submit_button("Reset"):
                 for feature in cad_features_dict:
                     if feature in st.session_state:
@@ -1054,7 +1102,10 @@ if st.session_state['step'] == 'cad_results':
 
 # Process NSCLC Prediction
 if st.session_state['step'] == 'nsclc':
-    st.sidebar.write("Select a NSCLC model:")
+    st.sidebar.write("**Order of steps for prediction**")
+    st.sidebar.write("Step 1. Input patient info")
+    st.sidebar.write("Step 2. Select a desired model configuration")
+    st.sidebar.write("Step 3. Select a model from the available selection")
     tab1, tab2, tab3 = st.tabs(["Step 1. Input patient info", "Step 2. Model configuration", "Step 3. Select a model"])
     with tab1:
         st.header("Input patient info")
