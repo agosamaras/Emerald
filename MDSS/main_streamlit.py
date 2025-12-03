@@ -21,6 +21,16 @@ from openai import OpenAI
 import mysql.connector
 from mysql.connector import Error
 import decimal
+import pydicom
+from skimage.transform import resize
+import plotly.graph_objects as go
+from torchvision.utils import save_image
+import sys
+import glob
+from datetime import datetime
+from io import BytesIO
+import subprocess
+import threading
 
 # App vars and functions
 cad_features_dict = {
@@ -283,9 +293,6 @@ def load_from_db(entry_id, table="cad"): #TODO take into account the 3 new field
     return None
 
 def load_results_to_db(entry_id, table="cad"):
-    features_map = cad_features_db_mapping
-    if table == "nsclc":
-        features_map = nsclc_features_db_mapping
     connection = create_connection()
     if connection is None:
         st.error("Failed to connect to the database")
@@ -710,102 +717,6 @@ def show_adaboost_results(feature_values):
     # code for SHAP visualization
     tree_xai(loaded_model, dataframe, model_prediction[0])
 
-def FCM_based_prediction(clinical_array, best_position, num_dimensions, study):
-    if study == 'cad':
-        user_bmi = int(clinical_array['BMI'])
-        # Min and max values for age
-        min_bmi = 15
-        max_bmi = 45
-        # Perform min-max normalization for the user-provided age
-        normalized_bmi = (user_bmi - min_bmi) / (max_bmi - min_bmi)
-        clinical_array['BMI'] = normalized_bmi
-        
-    if study == 'nsclc' or study == 'nsclc_multimodal':
-        user_bmi = int(clinical_array['BMI'])
-        normalized_bmi = user_bmi / 3
-        clinical_array['BMI'] = normalized_bmi
-        
-        user_diameter = float(clinical_array['Diameter'])
-        normalized_diameter = user_diameter / 70
-        clinical_array['Diameter'] = normalized_diameter
-        
-        user_suv = float(clinical_array['SUV'])
-        normalized_suv = user_suv / 30
-        clinical_array['SUV'] = normalized_suv
- 
-    # User-provided age
-    print(f"clinical_array: {clinical_array}")
-    user_age = int(clinical_array['age'])
-
-    # Min and max values for age
-    min_age = 1
-    max_age = 120
-
-    # Perform min-max normalization for the user-provided age
-    normalized_age = (user_age - min_age) / (max_age - min_age)
-
-    # Update the dictionary with the normalized age value
-    clinical_array['age'] = normalized_age
-
-    clinical_array_list_values = [int(value) for value in clinical_array.values()]
-    clinical_array_list_values = [int(value) for value in clinical_array.values()]
-
-    clinical_array_list_values.append(0.5)
-
-    # Initialize predicted_results with zeros
-    predicted_results = [0.0] * num_dimensions
-    best_position = best_position[1:]
-
-    for i in range(0, num_dimensions):
-        sum_temp = 0
-
-        # Iterate through each dimension
-        for j in range(0, num_dimensions):
-            if i == j:
-                continue
-            else:
-                sum_temp += best_position[j][i] * clinical_array_list_values[j]
-
-        # Update the predicted result
-        predicted_results[i] += sum_temp
-        predicted_results[i] = sig(predicted_results[i])
-    output_prediction = predicted_results[-1]
-
-    limit = 0.6
-    # if study== 'nsclc_multimodal':
-    #     limit = 0.8
-    
-    binary_prediction = output_prediction > limit
-
-    return binary_prediction, output_prediction, predicted_results
-
-def show_fcm_pso_results(feature_values):
-    if st.session_state['cad_patient_info']:
-        study = "cad"
-        df = pd.read_excel("trained_models/fcm_cad_mean_values.xlsx", header=None)
-        if feature_values['Doctor: Healthy'] == 1:
-            feature_values['Doctor: Healthy'] = 0
-        else:
-            feature_values['Doctor: Healthy'] = 1
-    else:
-        feature_values = transform_fcm_nsclc_vals(feature_values)
-        study = "nsclc"
-        df = pd.read_excel("trained_models/fcm_nsclc_mean_values.xlsx", header=None)
-    best_position = df.to_numpy()
-    bin_pred, out_pred, pred_results = FCM_based_prediction(feature_values,best_position,num_dimensions=len(feature_values), study=study)
-    if study == 'cad':
-        cad_pred_print(bin_pred, out_pred)
-        print(f"pred_results: {pred_results}") #TODO pass to NLP
-        st.text("The concept_values for each concept are the following:")
-        for name, val in zip(concept_names_list_cad_fcm, pred_results):
-            st.text(f"For {name}: {val:.2f}")
-    else:
-        nsclc_pred_print(bin_pred, out_pred)
-        print(f"pred_results: {pred_results}") #TODO pass to NLP
-        st.text("The concept_values for each concept are the following:")
-        for name, val in zip(concept_names_list_nsclc_fcm, pred_results):
-            st.text(f"For {name}: {val:.2f}")
-
 # Function to preprocess an image object
 def preprocess_image(image, size=(640, 640)):
     transform = transforms.Compose([
@@ -858,9 +769,12 @@ def yolo_results(image, mode="PET", mask_size=60):
         model = YOLO(yolo_model_path_ct)
     else:
         model = YOLO(yolo_model_path_pet)
+
+    original_size = image.size
     original_image = image.convert('RGB')
-    heatmap = feature_ablation(model, original_image, mask_size)
-    overlayed_image = overlay_heatmap(original_image, heatmap, colormap=plt.cm.BuPu)
+    resized_image = original_image.resize((240, 240))
+    heatmap = feature_ablation(model, resized_image, mask_size)
+    overlayed_image = overlay_heatmap(resized_image, heatmap, colormap=plt.cm.BuPu)
 
     # Print the XAI result
     # Perform inference
@@ -870,246 +784,16 @@ def yolo_results(image, mode="PET", mask_size=60):
     prediction = res_data.top1
     conf_score = res_data.top1conf
     nsclc_pred_print(prediction, conf_score)
-    # some padding
-    st.markdown("")
-    st.markdown("")
-    col1, col2, col3 = st.columns([3, 1, 3])
-    with col1:
-        col1.header("Original")
-        st.image(image, caption="Uploaded Image", width=200)
-    with col3:
-        col3.header("XAI Image")
-        st.image(overlayed_image, caption="Ablation Heat-map", width=200)
-    return
 
-### Anna's models
-class GradCAM:
-    def __init__(self, model, classIdx, layerName=None):
-        # store the model, the class index used to measure the class
-        # activation map, and the layer to be used when visualizing
-        # the class activation map
-        self.model = model
-        self.classIdx = classIdx
-        self.layerName = layerName
-        # if the layer name is None, attempt to automatically find
-        # the target output layer
-        if self.layerName is None:
-            self.layerName = self.find_target_layer()
-
-    def find_target_layer(self):
-        # attempt to find the final convolutional layer in the network
-        # by looping over the layers of the network in reverse order
-        for layer in reversed(self.model.layers):
-            # check to see if the layer has a 4D output
-            if len(layer.output_shape) == 4:
-                return layer.name
-        # otherwise, we could not find a 4D layer so the GradCAM
-        # algorithm cannot be applied
-        raise ValueError("Could not find 4D layer. Cannot apply GradCAM.")
-
-    def compute_heatmap(self, image, eps=1e-8):
-        # construct our gradient model by supplying (1) the inputs
-        # to our pre-trained model, (2) the output of the (presumably)
-        # final 4D layer in the network, and (3) the output of the
-        # softmax activations from the model
-        gradModel = Model(
-            inputs=[self.model.inputs],
-            outputs=[self.model.get_layer(self.layerName).output, self.model.output]
-        )
-
-        # record operations for automatic differentiation
-        with tf.GradientTape() as tape:
-            # cast the image tensor to a float-32 data type, pass the
-            # image through the gradient model, and grab the loss
-            # associated with the specific class index
-            inputs = tf.cast(image, tf.float32)
-            (convOutputs, predictions) = gradModel(inputs)
-            loss = predictions[:, tf.argmax(predictions[0])]
-    
-        # use automatic differentiation to compute the gradients
-        grads = tape.gradient(loss, convOutputs)
-
-        # compute the guided gradients
-        castConvOutputs = tf.cast(convOutputs > 0, "float32")
-        castGrads = tf.cast(grads > 0, "float32")
-        guidedGrads = castConvOutputs * castGrads * grads
-        # the convolution and guided gradients have a batch dimension
-        # (which we don't need) so let's grab the volume itself and
-        # discard the batch
-        convOutputs = convOutputs[0]
-        guidedGrads = guidedGrads[0]
-
-        # compute the average of the gradient values, and using them
-        # as weights, compute the ponderation of the filters with
-        # respect to the weights
-        weights = tf.reduce_mean(guidedGrads, axis=(0, 1))
-        cam = tf.reduce_sum(tf.multiply(weights, convOutputs), axis=-1)
-
-        # grab the spatial dimensions of the input image and resize
-        # the output class activation map to match the input image
-        # dimensions
-        (w, h) = (image.shape[2], image.shape[1])
-        heatmap = cv2.resize(cam.numpy(), (w, h))
-        # normalize the heatmap such that all values lie in the range
-        # [0, 1], scale the resulting values to the range [0, 255],
-        # and then convert to an unsigned 8-bit integer
-        numer = heatmap - np.min(heatmap)
-        denom = (heatmap.max() - heatmap.min()) + eps
-        heatmap = numer / denom
-        heatmap = (heatmap * 255).astype("uint8")
-        # return the resulting heatmap to the calling function
-        return heatmap
-
-    def overlay_heatmap(self, heatmap, image, alpha=0.5,
-                        colormap=cv2.COLORMAP_JET):
-        # apply the supplied color map to the heatmap and then
-        # overlay the heatmap on the input image
-        heatmap = cv2.applyColorMap(heatmap, colormap)
-        heatmap = cv2.cvtColor(heatmap, cv2.COLOR_RGB2BGR)
-        
-        # Ensure both arrays are of type float32
-        if image.dtype != np.float32:
-            image = image.astype(np.float32)
-        if heatmap.dtype != np.float32:
-            heatmap = heatmap.astype(np.float32)
-            
-        output = cv2.addWeighted(image, alpha, heatmap, 1 - alpha, 0)
-        # return a 2-tuple of the color mapped heatmap and the output,
-        # overlaid image
-        return (heatmap, output)
-###
-def show_cnn_grad_cam_results(image, mode="PET", case='default'):
-    original_height, original_width = image.shape[:2]
-    pixel_size = 200
-    model_layer = ''
-
-    if mode == 'PET':
-        cnn_model = keras.models.load_model("trained_models/pet_vgg16.keras")
-        pixel_size = 100
-        model_layer = 'block5_conv3'
-
-    if mode == 'CT':
-        cnn_model = keras.models.load_model("trained_models/ct_vgg16.keras")
-        pixel_size = 100
-        model_layer = 'block5_conv3'
-
-    if mode == 'Polar Maps':
-        cnn_model = keras.models.load_model("trained_models/polar_maps.keras")
-        pixel_size = 300
-        model_layer = 'conv2d_2'
-
-    if mode == 'SPECT':
-        cnn_model = keras.models.load_model("trained_models/spect_model")
-        pixel_size = 250
-        model_layer = 'conv2d_3'
-
-    res_image = cv2.resize(image, (pixel_size, pixel_size))
-    res_image = res_image.astype('float32') / 255
-    res_image = np.expand_dims(res_image, axis=0)
-
-    preds = cnn_model.predict(res_image)
-
-    if mode == 'SPECT':
-        classification_preds = (cnn_model.predict(res_image) > 0.5).astype(int)
-
-        if classification_preds[0, 0] == 1:
-            print("\n The model predicts that this image instance exhibits signs indicative of an infarction with a probability ", preds[0, 0])
-        if classification_preds[0, 1] == 1:
-            print("\n The model predicts that this image instance exhibits signs indicative of ischemic case with a probability ", preds[0, 1])
-        if classification_preds[0, 2] == 1:
-            print("\n The model predicts that this image instance exhibits signs indicative of normal case with a probability ", preds[0, 2])
+    # If the original image is smaller than 240x240, keep the 240x240 resolution, otherwise revert to the original size
+    if original_size[0] < 240 or original_size[1] < 240:
+        # Keep the 240x240 resolution
+        final_image = resized_image
+        final_overlayed_image = overlayed_image
     else:
-        binary_preds = (preds > 0.5).astype(int)
-        if binary_preds == 0:
-            print("\nThe image is predicted as Benign with a probability ", preds)
-        else:
-            print("\nThe image is predicted as Malignant with a probability ", preds)
-
-    i = np.argmax(preds[0])
-
-    icam = GradCAM(cnn_model, i, model_layer)
-    heatmap = icam.compute_heatmap(res_image)
-    heatmap = cv2.resize(heatmap, (pixel_size, pixel_size))
-
-    (heatmap, output) = icam.overlay_heatmap(heatmap, res_image[0], alpha=0.5)
-    st.session_state['xai_image'] = heatmap #TODO do this for all models
-
-
-    heatmap = cv2.resize(output, (original_width, original_height))
-
-    # Normalize heatmap to [0, 1]
-    heatmap = heatmap - heatmap.min()
-    heatmap = heatmap / heatmap.max()
-
-    if case != 'Multimodal':
-        if mode == 'Polar Maps':
-            cad_pred_print(binary_preds, preds)
-        elif mode == 'SPECT':
-            spect_pred_print(classification_preds, preds)
-        else:
-            nsclc_pred_print(binary_preds, preds)
-    else:
-        return preds, heatmap
-
-    st.markdown("")
-    st.markdown("")
-    col1, col2, col3 = st.columns([3, 1, 3])
-    with col1:
-        col1.header("Original")
-        st.image(cv2.cvtColor(image, cv2.COLOR_BGR2RGB), caption="Uploaded Image", use_column_width=True)
-    with col3:
-        col3.header("XAI Image")
-        st.image(heatmap, caption="GRAD-CAM Image", use_column_width=True)
-
-    return
-
-def show_deep_fcm_results(feature_values, image, mode="PET"):
-    if st.session_state['cad_patient_info']:
-        study = "cad"
-        df = pd.read_excel("trained_models/deepfcm_cad_mean_values.xlsx", header=None)
-        best_position = df.to_numpy()
-        num_dimensions= len(feature_values) + 2
-        cnn_prediction, heatmap = show_cnn_grad_cam_results(image, mode='Polar Maps', case='Multimodal')
-        img_type = 'Polar Maps'
-    else:
-        feature_values = transform_fcm_nsclc_vals(feature_values)
-        study = "nsclc"
-        if mode == "PET":
-            df = pd.read_excel("trained_models/deepfcm_nsclc_pet_mean_values.xlsx", header=None)
-            best_position = df.to_numpy()
-            num_dimensions= len(feature_values) + 1
-            cnn_prediction, heatmap = show_cnn_grad_cam_results(image, mode='PET', case='Multimodal')
-            img_type = 'PET'
-        else:
-            df = pd.read_excel("trained_models/deepfcm_nsclc_ct_mean_values.xlsx", header=None)
-            best_position = df.to_numpy()
-            num_dimensions= len(feature_values) + 1
-            cnn_prediction, heatmap = show_cnn_grad_cam_results(image, mode='CT', case='Multimodal')
-            img_type = 'CT'
-        
-    cnn_prediction = cnn_prediction > 0.5    
-    cnn_prediction = int(cnn_prediction[0, 0])
-    feature_values['cnn_prediction'] = cnn_prediction
-    st.session_state['cnn_prediction'] = cnn_prediction
-    
-    bin_pred, out_pred, pred_results = FCM_based_prediction(feature_values,best_position,num_dimensions, study=img_type)
-    st.session_state['class_result'] = bin_pred #TODO do this for all models
-    if study == 'cad':
-        cad_pred_print(bin_pred, out_pred)
-        print(f"pred_results: {pred_results}") #TODO pass to NLP
-        st.text("The concept_values for each concept are the following:")
-        temp_name_list = concept_names_list_cad_fcm
-        temp_name_list.append("CNN prediction")
-        for name, val in zip(temp_name_list, pred_results):
-            st.text(f"For {name}: {val:.2f}")
-    else:
-        nsclc_pred_print(bin_pred, out_pred)
-        print(f"pred_results: {pred_results}") #TODO pass to NLP
-        st.text("The concept_values for each concept are the following:")
-        temp_name_list = concept_names_list_nsclc_fcm
-        temp_name_list.append("CNN prediction")
-        for name, val in zip(temp_name_list, pred_results):
-            st.text(f"For {name}: {val:.2f}")
+        # Revert to original size
+        final_image = resized_image.resize(original_size)
+        final_overlayed_image = overlayed_image.resize(original_size)
 
     # some padding
     st.markdown("")
@@ -1117,11 +801,10 @@ def show_deep_fcm_results(feature_values, image, mode="PET"):
     col1, col2, col3 = st.columns([3, 1, 3])
     with col1:
         col1.header("Original")
-        st.image(cv2.cvtColor(image, cv2.COLOR_BGR2RGB), caption="Uploaded Image", width=200)
+        st.image(final_image, caption="Uploaded Image", width=200)
     with col3:
         col3.header("XAI Image")
-        st.image(heatmap, caption="GRAD-CAM Image", width=200)
-    
+        st.image(final_overlayed_image, caption="Ablation Heat-map", width=200)
     return
 
 cad_models_dict = {
@@ -1139,39 +822,7 @@ cad_models_dict = {
             "features": ['known CAD', 'previous PCI', 'previous CABG', 'previous STROKE', 'Diabetes', 'Smoking', 'Angiopathy', 
                         'Chronic Kindey Disease', 'ANGINA LIKE', 'INCIDENT OF PRECORDIAL PAIN', 'RST ECG', 'male', 'Obese', '40b50', '50b60']
         },
-        {
-            "name": "FCM-PSO",
-            "function": show_fcm_pso_results,
-            "info": "FCM-PSO requires the Doctor's yield as input. This pretrained model achieves a reported accuracy of 74.98%.",
-            "features": ['male', 'age', 'BMI', 'known CAD', 'previous AMI', 'previous PCI', 'previous CABG', 'previous STROKE', 'Diabetes', 'Smoking', 'Arterial Hypertension',
-			            'Dislipidemia', 'Angiopathy', 'Chronic Kindey Disease', 'Family History of CAD', 'ASYMPTOMATIC', 'ATYPICAL SYMPTOMS', 'ANGINA LIKE', 'DYSPNOEA ON EXERTION',
-			            'INCIDENT OF PRECORDIAL PAIN', 'RST ECG', 'Doctor: Healthy']
-        },
     ],
-    'cad_models_image': [
-        {
-            "name": "RGB-CNN-Polar-Maps",
-            "function": show_cnn_grad_cam_results,
-            "info": "RGB-CNN is trained on Polar maps image data. This pretrained model has a reported accuracy of 81.25%.",
-            "modes": ["Polar Maps"],
-        },
-        {
-            "name": "RGB-CNN-SPECT-MPI",
-            "function": show_cnn_grad_cam_results,
-            "info": "RGB-CNN is trained on SPECT-MPI image data. This pretrained model has a reported accuracy of 84.37%.",
-            "modes": ["SPECT"],
-        },
-    ],
-    'cad_models_multimodal': [
-        {
-            "name": "DeepFCM",
-            "function": show_deep_fcm_results,
-            "info": "DeepFCM is a multimodal approach able to handle both clinical and Polar Maps imaging data. PSO is utilized as a learning technique. This pretrained model has a reported accuracy of 84.21%.",
-            "features": ['male', 'age', 'BMI', 'known CAD', 'previous AMI', 'previous PCI', 'previous CABG', 'previous STROKE', 'Diabetes', 'Smoking', 'Arterial Hypertension',
-			            'Dislipidemia', 'Angiopathy', 'Chronic Kindey Disease', 'Family History of CAD', 'ASYMPTOMATIC', 'ATYPICAL SYMPTOMS', 'ANGINA LIKE', 'DYSPNOEA ON EXERTION',
-			            'INCIDENT OF PRECORDIAL PAIN', 'RST ECG', 'Doctor: Healthy']
-        },
-    ]
 }
 
 nsclc_models_dict = {
@@ -1182,12 +833,6 @@ nsclc_models_dict = {
             "info": "AdaBoost model architecture. This pretrained model has a reported accuracy of 94.33%.",
             "features": ['Gender','Fdg','Age','BMI','GLU','SUV','Diameter','Location','Type','Limits']
         },
-        {
-            "name": "FCM-PSO",
-            "function": show_fcm_pso_results,
-            "info": "FCM-PSO handles clinical data as input concepts. PSO is utilized as a learning technique. This pretrained model has a reported accuracy of 82.61%.",
-            "features": ['Gender','Fdg','Age','BMI','GLU','SUV','Diameter','Location','Type','Limits']
-        }
     ],
     'nsclc_models_image': [
         {
@@ -1195,20 +840,7 @@ nsclc_models_dict = {
             "function": yolo_results,
             "info": "You Only Look Once (YOLO) version 8 can be applied to CT or PET medical scans. This pretrained model has a reported accuracy of 89% for PET images and 92.3% for CT.",
         },
-        {
-            "name": "VGG-16",
-            "function": show_cnn_grad_cam_results,
-            "info": "VGG-16 is a pre-trained network, which has been fine-tuned to CT or PET medical scans. This pretrained model has a reported accuracy of 85% for PET images and 87.5% for CT.",
-        },
     ],
-    'nsclc_models_multimodal': [
-        {
-            "name": "DeepFCM",
-            "function": show_deep_fcm_results,
-            "info": "DeepFCM is a multimodal approach able to handle both clinical and PET/CT imaging data. PSO is utilized as a learning technique. This pretrained model has a reported accuracy of 86.45% for PET and 86.96% for CT.",
-            "features": ['Gender','Fdg','Age','BMI','GLU','SUV','Diameter','Location','Type','Limits']
-        },
-    ]
 }
 
 # st.session_state[] initializations
@@ -1396,13 +1028,152 @@ def xai_cat(model, X):
     fig_force_0 = shap.force_plot(explainer.expected_value, shap_values[0,:], X.iloc[0,:], matplotlib=True)
     st.pyplot(fig_force_0)
 
+# DICOM Viewer Functions - Removed (using standalone viewer instead)
+
+# Synthetic Image Generation Functions
+def find_available_models():
+    """Find all available trained models"""
+    models = {}
+    # Get the base path - go up from MDSS to root, then to Image_Gen
+    current_file = os.path.abspath(__file__)
+    base_path = os.path.join(os.path.dirname(os.path.dirname(current_file)), 'Image_Gen')
+    
+    if not os.path.exists(base_path):
+        # Try alternative path
+        base_path = os.path.join(os.path.dirname(current_file), '..', 'Image_Gen')
+        base_path = os.path.abspath(base_path)
+    
+    if not os.path.exists(base_path):
+        return models
+    
+    model_patterns = [
+        os.path.join(base_path, "models", "*_generator_epoch_*.pth"),
+        os.path.join(base_path, "generated_images", "*", "*", "models", "generator_epoch_*.pth")
+    ]
+    
+    for pattern in model_patterns:
+        for model_path in glob.glob(pattern):
+            filename = os.path.basename(model_path)
+            
+            if "generator" in filename:
+                parts = filename.replace("_generator", "").replace(".pth", "").split("_")
+                
+                if len(parts) >= 3:
+                    if "models" in model_path:
+                        architecture = parts[0]
+                        modality = parts[1]
+                        epoch = parts[-1]
+                    else:
+                        epoch = parts[-1]
+                        path_parts = model_path.split(os.sep)
+                        if len(path_parts) >= 3:
+                            modality = path_parts[-4] if len(path_parts) >= 4 else None
+                            run_dir = path_parts[-3]
+                            run_parts = run_dir.split("_")
+                            if len(run_parts) >= 3:
+                                architecture = run_parts[-2]
+                            else:
+                                continue
+                        else:
+                            continue
+                    
+                    if modality and architecture:
+                        key = f"{architecture}_{modality}"
+                        if key not in models or int(epoch) > int(models[key]['epoch']):
+                            models[key] = {
+                                'path': model_path,
+                                'architecture': architecture,
+                                'modality': modality,
+                                'epoch': epoch
+                            }
+    
+    return models
+
+def generate_synthetic_image(modality, architecture, num_samples, diagnosis=None, model_path=None):
+    """Generate synthetic PET/CT images"""
+    try:
+        # Add Image_Gen to path
+        current_file = os.path.abspath(__file__)
+        image_gen_path = os.path.join(os.path.dirname(os.path.dirname(current_file)), 'Image_Gen')
+        if not os.path.exists(image_gen_path):
+            image_gen_path = os.path.join(os.path.dirname(current_file), '..', 'Image_Gen')
+            image_gen_path = os.path.abspath(image_gen_path)
+        
+        if image_gen_path not in sys.path and os.path.exists(image_gen_path):
+            sys.path.insert(0, image_gen_path)
+        
+        from src.architectures import DCGANGenerator, ConditionalGenerator
+        from config import Config
+        
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        latent_dim = Config.LATENT_DIM
+        
+        # Initialize generator
+        if architecture == 'dcgan':
+            generator = DCGANGenerator(latent_dim).to(device)
+        elif architecture == 'conditional':
+            generator = ConditionalGenerator(latent_dim).to(device)
+        else:
+            raise ValueError(f"Unknown architecture: {architecture}")
+        
+        # Load model
+        if model_path is None:
+            models = find_available_models()
+            key = f"{architecture}_{modality}"
+            if key not in models:
+                return None, f"No trained model found for {architecture} + {modality}"
+            model_path = models[key]['path']
+        
+        if not os.path.exists(model_path):
+            return None, f"Model file not found: {model_path}"
+        
+        state_dict = torch.load(model_path, map_location=device)
+        generator.load_state_dict(state_dict)
+        generator.eval()
+        
+        # Generate images
+        generated_images = []
+        with torch.no_grad():
+            for i in range(num_samples):
+                z = torch.randn(1, latent_dim, device=device)
+                
+                if diagnosis is not None:
+                    label = 0 if diagnosis == 'benign' else 1
+                else:
+                    label = torch.randint(0, 2, (1,)).item()
+                
+                if architecture == 'conditional':
+                    label_tensor = torch.tensor([label], device=device, dtype=torch.long)
+                    generated_scan = generator(z, label_tensor)
+                else:
+                    generated_scan = generator(z)
+                
+                # Convert to PIL Image
+                img_tensor = generated_scan.squeeze(0).cpu()
+                img_array = ((img_tensor + 1) / 2 * 255).clamp(0, 255).numpy().astype(np.uint8)
+                if len(img_array.shape) == 2:
+                    img = Image.fromarray(img_array, mode='L')
+                else:
+                    img = Image.fromarray(img_array[0], mode='L')
+                
+                generated_images.append({
+                    'image': img,
+                    'diagnosis': 'benign' if label == 0 else 'malignant',
+                    'modality': modality
+                })
+        
+        return generated_images, None
+        
+    except Exception as e:
+        return None, f"Error generating images: {str(e)}"
+
 # App flow
 # Sidebar
 with st.sidebar:
     selected = option_menu(
         menu_title="Main Menu",
-        options=["Home", "CAD", "NSCLC", "Load results from DB", "Contact Us"],
-        icons=["house", "heart", "lungs", "open_file_folder", "envelope"],
+        options=["Home", "CAD", "NSCLC", "DICOM Viewer", "Synthetic Image Generator", "Load results from DB", "Contact Us"],
+        icons=["house", "heart", "lungs", "image", "rocket", "database", "envelope"],
         menu_icon="cast",
         default_index=0,
     )
@@ -1469,6 +1240,137 @@ elif selected == "Load results from DB":
                 st.error("No results found for the given Entry ID.")
         else:
             st.error("Please enter an Entry ID.")
+
+elif selected == "DICOM Viewer":
+    st.header("DICOM Viewer")
+    st.markdown("Launch the standalone DICOM Viewer application for viewing and analyzing DICOM files.")
+    
+    # Instructions
+    st.info("""
+    **Features of the Standalone DICOM Viewer:**
+    - Open and visualize DICOM folders (CT and PET modalities)
+    - Adjust contrast (window/level) with sliders
+    - Zoom and pan images interactively
+    - Crop and save regions of interest as PNG
+    - Anonymize DICOM files
+    - Export current slice as PNG
+    - Export all slices as MP4 video
+    - View DICOM metadata
+    - Switch between CT and PET modalities
+    """)
+    
+    # Launch button
+    dicom_app_path = os.path.join(os.path.dirname(__file__), "dicom viewer app", "app.py")
+    
+    if os.path.exists(dicom_app_path):
+        col1, col2, col3 = st.columns([1, 2, 1])
+        with col2:
+            if st.button("🚀 Launch Standalone DICOM Viewer", type="primary", use_container_width=True):
+                try:
+                    # Launch the Tkinter app in a separate process
+                    subprocess.Popen([sys.executable, dicom_app_path], 
+                                   cwd=os.path.dirname(dicom_app_path))
+                    st.success("✅ Standalone DICOM Viewer launched in a new window!")
+                    st.info("💡 The viewer will open in a separate window. Use the 'Open' button in the viewer to select a folder containing DICOM files.")
+                except Exception as e:
+                    st.error(f"❌ Failed to launch standalone viewer: {e}")
+                    st.exception(e)
+    else:
+        st.error(f"❌ Standalone viewer not found at: {dicom_app_path}")
+        st.info("Please ensure the DICOM viewer app is located in: `MDSS/dicom viewer app/app.py`")
+    
+    st.divider()
+    
+    # Additional information
+    with st.expander("📖 How to Use"):
+        st.markdown("""
+        1. Click the **"Launch Standalone DICOM Viewer"** button above
+        2. A new window will open with the DICOM Viewer application
+        3. In the viewer window, click **"Open"** to select a folder containing DICOM files
+        4. Click **"Visualize"** to load and view the DICOM images
+        5. Use the sliders to adjust slice, contrast (window/level), and zoom
+        6. Use mouse to pan and interact with the images
+        7. Use the buttons to crop, save, anonymize, or export images
+        """)
+
+elif selected == "Synthetic Image Generator":
+    st.header("Synthetic PET/CT Image Generator")
+    st.markdown("Generate synthetic medical images (PET/CT) that are benign or malignant using trained GAN models.")
+    
+    # Configuration
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        modality = st.selectbox("Select Modality", ["pet", "ct"])
+        architecture = st.selectbox("Select Architecture", ["dcgan", "conditional"])
+        num_samples = st.number_input("Number of Images", min_value=1, max_value=50, value=5)
+    
+    with col2:
+        diagnosis = st.selectbox("Diagnosis", ["Random", "Benign", "Malignant"])
+        diagnosis = None if diagnosis == "Random" else diagnosis.lower()
+    
+    # Find available models
+    available_models = find_available_models()
+    
+    if available_models:
+        st.sidebar.subheader("Available Models")
+        for key, model_info in available_models.items():
+            if model_info['modality'] == modality and model_info['architecture'] == architecture:
+                st.sidebar.success(f"✓ {model_info['architecture']} - {model_info['modality']} (Epoch {model_info['epoch']})")
+                break
+        else:
+            st.sidebar.warning(f"No model found for {architecture} + {modality}")
+    else:
+        st.sidebar.warning("No trained models found. Please train models first.")
+    
+    # Generate button
+    if st.button("Generate Images", type="primary"):
+        if not available_models:
+            st.error("No trained models available. Please train models in the Image_Gen directory first.")
+        else:
+            key = f"{architecture}_{modality}"
+            if key not in available_models:
+                st.error(f"No trained model found for {architecture} + {modality}. Available models: {list(available_models.keys())}")
+            else:
+                with st.spinner("Generating synthetic images..."):
+                    model_path = available_models[key]['path']
+                    generated_images, error = generate_synthetic_image(
+                        modality=modality,
+                        architecture=architecture,
+                        num_samples=num_samples,
+                        diagnosis=diagnosis,
+                        model_path=model_path
+                    )
+                    
+                    if error:
+                        st.error(error)
+                    elif generated_images:
+                        st.success(f"Successfully generated {len(generated_images)} images!")
+                        
+                        # Display images in a grid
+                        cols_per_row = 3
+                        for i in range(0, len(generated_images), cols_per_row):
+                            cols = st.columns(cols_per_row)
+                            for j, col in enumerate(cols):
+                                if i + j < len(generated_images):
+                                    img_info = generated_images[i + j]
+                                    with col:
+                                        st.image(img_info['image'], caption=f"{img_info['diagnosis'].upper()} {img_info['modality'].upper()}", use_column_width=True)
+                        
+                        # Download option
+                        st.subheader("Download Generated Images")
+                        for idx, img_info in enumerate(generated_images):
+                            # Convert PIL Image to bytes
+                            buf = BytesIO()
+                            img_info['image'].save(buf, format='PNG')
+                            img_bytes = buf.getvalue()
+                            
+                            st.download_button(
+                                label=f"Download {img_info['diagnosis']} {img_info['modality']} #{idx+1}",
+                                data=img_bytes,
+                                file_name=f"synthetic_{img_info['modality']}_{img_info['diagnosis']}_{idx+1}.png",
+                                mime="image/png"
+                            )
 
 elif selected == "Contact Us":
     st.header("EMERALD Medical Decision Support System")
@@ -1598,27 +1500,27 @@ if st.session_state['step'] == 'cad':
                 else:
                     st.error(f"No record found for entry ID: {entry_id}")
 
-        # Save to DB button
-        if st.button("Save to DB"):
-            data = {feature: st.session_state[feature] for feature in cad_features_dict}
-            data['age'] = st.session_state['age'] # age is not included in dict cad_features_dict
-            entry_id = save_to_db(data, "cad")
-            st.success(f"Data saved to DB with entry ID: {entry_id}")
-            st.session_state['entry_id'] = entry_id
+        # # Save to DB button
+        # if st.button("Save to DB"):
+        #     data = {feature: st.session_state[feature] for feature in cad_features_dict}
+        #     data['age'] = st.session_state['age'] # age is not included in dict cad_features_dict
+        #     entry_id = save_to_db(data, "cad")
+        #     st.success(f"Data saved to DB with entry ID: {entry_id}")
+        #     st.session_state['entry_id'] = entry_id
 
-        # Load from DB section
-        with st.form(key='Load from DB'):
-            entry_id = st.number_input("Enter entry ID to load", min_value=1, step=1)
-            if st.form_submit_button("Load"):
-                record = load_from_db(entry_id, "cad")
-                if record:
-                    for feature in cad_features_dict:
-                        st.session_state[feature] = record.get(feature, None)
-                        if isinstance(st.session_state[feature], decimal.Decimal):
-                            st.session_state[feature] = float(st.session_state[feature])
-                    st.success(f"Data loaded from DB for entry ID: {entry_id}")
-                else:
-                    st.error(f"No record found for entry ID: {entry_id}")
+        # # Load from DB section
+        # with st.form(key='Load from DB'):
+        #     entry_id = st.number_input("Enter entry ID to load", min_value=1, step=1)
+        #     if st.form_submit_button("Load"):
+        #         record = load_from_db(entry_id, "cad")
+        #         if record:
+        #             for feature in cad_features_dict:
+        #                 st.session_state[feature] = record.get(feature, None)
+        #                 if isinstance(st.session_state[feature], decimal.Decimal):
+        #                     st.session_state[feature] = float(st.session_state[feature])
+        #             st.success(f"Data loaded from DB for entry ID: {entry_id}")
+        #         else:
+        #             st.error(f"No record found for entry ID: {entry_id}")
 
     with tab2:
         st.header("Input model preferences")
