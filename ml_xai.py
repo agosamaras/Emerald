@@ -20,6 +20,8 @@ from mlxtend.feature_selection import SequentialFeatureSelector as SFS
 from genetic_selection import GeneticSelectionCV
 from sklearn.tree import DecisionTreeClassifier
 from tabpfn import TabPFNClassifier
+import xgboost
+from lightgbm import LGBMClassifier
 import shap
 
 def cohen_effect_size(X, y):
@@ -176,14 +178,15 @@ def xai_cat(model, X):
     shap_rank.sort_values(by="importance", ascending=False)
     print(shap_rank)
 
-data = pd.read_csv('/d/Σημειώσεις/PhD - EMERALD/1. CAD/src/cad_dset.csv')
+data = pd.read_csv('/mnt/d/Σημειώσεις/PhD - EMERALD/1. CAD/src/cad_dset.csv')
 # print(data.columns)
 # print(data.values)
 dataframe = pd.DataFrame(data.values, columns=data.columns)
 dataframe['CAD'] = data.CAD
 x = dataframe.drop(['ID','female','CNN_Healthy','CNN_CAD','Doctor: CAD','HEALTHY','CAD'], axis=1) # Whether to drop labels from the index (0 or ‘index’) or columns (1 or ‘columns’).
 x_nodoc = dataframe.drop(['ID','female','CNN_Healthy','CNN_CAD','Doctor: CAD', 'Doctor: Healthy','HEALTHY','CAD'], axis=1) # Whether to drop labels from the index (0 or ‘index’) or columns (1 or ‘columns’).
-# print("x:\n",x.columns)
+x_prognosis = dataframe.drop(['ID','female','Arterial Hypertension','Dislipidemia','Angiopathy','ASYMPTOMATIC','ATYPICAL SYMPTOMS','ANGINA LIKE','DYSPNOEA ON EXERTION','INCIDENT OF PRECORDIAL PAIN','RST ECG','CNN_Healthy','CNN_CAD','Doctor: CAD', 'Doctor: Healthy','HEALTHY','CAD'], axis=1)
+
 y = dataframe['CAD'].astype(int)
 # print("y:\n",y)
 
@@ -195,6 +198,8 @@ rndF = RandomForestClassifier(max_depth=None, random_state=0, n_estimators=80) #
 ada = AdaBoostClassifier(n_estimators=30, random_state=0) #TODO n_estimators=150 when testing with doctor, 30 w/o doctor
 knn = KNeighborsClassifier(n_neighbors=20) #TODO n_neighbors=13 when testing with doctor, 20 w/o doctor
 tab = TabPFNClassifier(device='cpu', N_ensemble_configurations=26)
+xgb = xgboost.XGBRegressor(objective="binary:hinge", random_state=42) # 68,48%
+light = LGBMClassifier(objective='binary', random_state=5, n_estimators=80, n_jobs=-1) # 72,16% / 80 -> 78,291
 catb = CatBoostClassifier(n_estimators=79, learning_rate=0.1, verbose=False)
 
 
@@ -230,19 +235,21 @@ no_doc_catb = ['known CAD', 'previous PCI', 'previous CABG', 'previous STROKE', 
                'ANGINA LIKE', 'INCIDENT OF PRECORDIAL PAIN', 'RST ECG', 'male', 'Obese', '40b50', '50b60'] # 78,82%
 #######################################
 
-x = x_nodoc #TODO ucommment when running w/o doctor
+# x = x_nodoc #TODO ucommment when running w/o doctor
+x = x_prognosis #TODO ucommment when running prognosis
 X = x
-sel_features = no_doc_catb
+# print("x:\n",x.columns)
+# sel_features = no_doc_catb
 sel_alg = catb
 
 ##############
 ### CV-10 ####
 ##############
-for feature in x.columns:
-    if feature in sel_features:
-        pass    
-    else:
-        X = X.drop(feature, axis=1)
+# for feature in x.columns:
+#     if feature in sel_features:
+#         pass    
+#     else:
+#         X = X.drop(feature, axis=1)
 
 est = sel_alg.fit(X, y)
 # n_yhat = est.predict(X)
@@ -285,4 +292,4 @@ plt.show()
 # xai_svm(est, X, pd.core.indexes.range.RangeIndex(start=0, stop=2, step=1))
 # xai_svm(est, X, X.index)
 
-xai_cat(est, X)
+# xai_cat(est, X)

@@ -1,0 +1,4 @@
+ttkbootstrap
+numpy
+pydicom
+opencv-python

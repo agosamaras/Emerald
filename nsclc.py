@@ -66,19 +66,31 @@ def xai(model, X, idx):
     # shap.decision_plot(0, shap_values[idx_mal], X.loc[idx[idx_mal]], highlight=0)
     return shap_values
 
+def xai_cat(model, X):
+    explainer = shap.TreeExplainer(model)
+    shap_values = explainer.shap_values(X)
+    sv = explainer.shap_values(X.loc[[0]])
+    exp = shap.Explanation(sv,explainer.expected_value, data=X.loc[[0]].values, feature_names=X.columns)
+    # Show waterfall plot for idx_cad
+    # fig_cad, _ = plt.subplots()
+    shap.waterfall_plot(exp[0])
+
 # data_path = '/d/Σημειώσεις/PhD - EMERALD/2. NSCLC/Input Data/stats.csv'
 # data_path = 'stats.csv'
-data_path = 'stats_Anna.csv'
+# data_path = 'stats_Anna.csv'
+data_path = 'nsclc_loc.csv'
+# data_path = 'nsclc_clinical_Data.csv'
 data = pd.read_csv(data_path, na_filter = False)
 # print(data.columns)
 # print(data.values)
 dataframe = pd.DataFrame(data.values, columns=data.columns)
 # dataframe['BENIGN'] = data.BENIGN
 # x = dataframe.drop(['BENIGN', 'Fdg'], axis=1) # Whether to drop labels from the index (0 or ‘index’) or columns (1 or ‘columns’).
-x = dataframe.drop(['id','BENIGN'], axis=1) # Whether to drop labels from the index (0 or ‘index’) or columns (1 or ‘columns’).
+# x = dataframe.drop(['id','BENIGN'], axis=1) # Whether to drop labels from the index (0 or ‘index’) or columns (1 or ‘columns’).
+x = dataframe.drop(['Output'], axis=1) # Whether to drop labels from the index (0 or ‘index’) or columns (1 or ‘columns’).
 # print("x:\n",x.columns)
 # y = dataframe['BENIGN'].astype(int)
-y = dataframe['BENIGN']
+y = dataframe['Output']
 # print("y:\n",y)
 
 # ml algorithms initialization
@@ -290,6 +302,7 @@ joblib.dump(est, f'{sel_alg}_model.joblib')
 # plt.show()
 
 # xai(est, X, X.index)
+# xai_cat(est, X)
 
 #######
 # # By running the following loop we found out knn algorithm  gives best results for n=13

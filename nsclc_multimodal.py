@@ -40,7 +40,7 @@ def xai(model, X, idx):
     return shap_values
 
 # data_path = 'clinical_Data_ct.xlsx'
-data_path = 'clinical_Data_pet.xlsx'
+data_path = 'multimodal_ct_pet_nsclc.xlsx'
 data = pd.read_excel(data_path, na_filter = False)
 dataframe = pd.DataFrame(data.values, columns=data.columns)
 x = dataframe.drop(['Output'], axis=1) # Whether to drop labels from the index (0 or ‘index’) or columns (1 or ‘columns’).
@@ -51,7 +51,7 @@ rndF = RandomForestClassifier(max_depth=None, random_state=0, n_estimators=17) #
 ada = AdaBoostClassifier(n_estimators=15, random_state=0) #88.64 - 15
 catb = CatBoostClassifier(n_estimators=157, learning_rate=0.1, verbose=False) #90.82 - 157
 
-sel_alg = rndF
+sel_alg = catb
 X = x
 
 print(X.columns)

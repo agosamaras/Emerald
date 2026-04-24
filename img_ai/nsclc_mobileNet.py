@@ -85,8 +85,8 @@ def train_model(data_dir, num_epochs=10):
 
 if __name__ == '__main__':
     # Specify the path to the folder containing images
-    ct = f"F:/nsclc/Test3.v1/ct"
-    pet = f"F:/nsclc/Test3.v1/pet"
+    ct = "Test3.v1/ct_synth"
+    pet = "Test3.v1/pet"
 
     # Load custom dataset (replace 'data_directory' with your dataset directory)
     data_directory = ct

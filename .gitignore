@@ -128,5 +128,18 @@ dmypy.json
 # Pyre type checker
 .pyre/
 
+#datasets
+datasets/
+
 # CatBoost folder
 catboost_info/
+
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.bmp
+*.svg
+*.tiff
+*.7z
+*.ico

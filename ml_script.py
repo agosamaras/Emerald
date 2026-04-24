@@ -51,6 +51,7 @@ def perf_measure(y_actual, y_hat):
     return(TP, FP, TN, FN)
 
 data_path = '/d/Σημειώσεις/PhD - EMERALD/1. CAD/src/cad_dset.csv'
+data_path = '/mnt/d/Σημειώσεις/PhD - EMERALD/1. CAD/src/cad_dset.csv'
 # data_path = '/mnt/c/Users/samar/Documents/PhD - EMERALD/Extras/Parathyroid/input_data.csv'
 data = pd.read_csv(data_path)
 # print(data.columns)
